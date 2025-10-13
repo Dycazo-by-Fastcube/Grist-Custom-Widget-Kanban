@@ -1,4 +1,4 @@
-![Last commit](https://img.shields.io/github/last-commit/elodie-gateau/Grist-Custom-Widget-Kanban?style=for-the-badge&color=blueviolet)
+![Last commit](https://github.com/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban?style=for-the-badge&color=blueviolet)
 ![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Online-brightgreen?style=for-the-badge&logo=github)
 ![Made with JS](https://img.shields.io/badge/Made%20with-JavaScript-yellow?style=for-the-badge&logo=javascript)
 ![TailwindCSS](https://img.shields.io/badge/Styled%20with-TailwindCSS-06B6D4?style=for-the-badge&logo=tailwindcss)
@@ -75,7 +75,7 @@ Le widget est un **fichier unique** (HTML + JS) qui charge :
 
 1. Ouvrez votre **document Grist** → ajoutez une **page** ou une **vue à la page**.
 2. Cliquez sur **Personnalisée** → Sélectionnez votre source de données → **Ajouter une page**.
-3. Dans le champ **URL**, **collez l’URL GitHub Pages** du widget : **https://elodie-gateau.github.io/Grist-Custom-Widget-Kanban/** .
+3. Dans le champ **URL**, **collez l’URL GitHub Pages** du widget : **https://github.com/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban** .
 4. **Access level** : choisissez **Full** (nécessaire pour drag&drop, ajout de `Choice`, etc.).
 5. Dans le **panneau du widget** :
    - **Choisissez la “source”** (colonne `Choice/ChoiceList`) : menu déroulant “Choisissez une source”.
@@ -200,7 +200,7 @@ The widget is a **single HTML file** (HTML + JS) that loads:
 1. Open your **Grist document** → add a **page** or a **view to an existing page**.
 2. Click **Custom** → select your data source → **Add to page**.
 3. In the **URL** field, **paste the GitHub Pages URL** of the widget:  
-   **https://elodie-gateau.github.io/Grist-Custom-Widget-Kanban/**
+   **https://github.com/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban**
 4. **Access level**: choose **Full** (required for drag-and-drop and `Choice` additions).
 5. In the **widget settings panel**:
    - **Select the “source”** (`Choice/ChoiceList` column) in the “Choose a source” dropdown.
@@ -239,7 +239,7 @@ The widget is a **single HTML file** (HTML + JS) that loads:
 
 ---
 
-## Author
+## Authors
 
 **Élodie GATEAU**  
 Web & No-Code Developer • Creator of the **Kanban Widget for Grist**  

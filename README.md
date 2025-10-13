@@ -1,4 +1,4 @@
-![Last commit](https://github.com/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban?style=for-the-badge&color=blueviolet)
+![Last commit](https://img.shields.io/github/last-commit/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban?style=for-the-badge&color=blueviolet)
 ![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Online-brightgreen?style=for-the-badge&logo=github)
 ![Made with JS](https://img.shields.io/badge/Made%20with-JavaScript-yellow?style=for-the-badge&logo=javascript)
 ![TailwindCSS](https://img.shields.io/badge/Styled%20with-TailwindCSS-06B6D4?style=for-the-badge&logo=tailwindcss)

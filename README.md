@@ -75,7 +75,7 @@ Le widget est un **fichier unique** (HTML + JS) qui charge :
 
 1. Ouvrez votre **document Grist** → ajoutez une **page** ou une **vue à la page**.
 2. Cliquez sur **Personnalisée** → Sélectionnez votre source de données → **Ajouter une page**.
-3. Dans le champ **URL**, **collez l’URL GitHub Pages** du widget : **https://github.com/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban** .
+3. Dans le champ **URL**, **collez l’URL GitHub Pages** du widget : **https://dycazo-by-fastcube.github.io/Grist-Custom-Widget-Kanban/** .
 4. **Access level** : choisissez **Full** (nécessaire pour drag&drop, ajout de `Choice`, etc.).
 5. Dans le **panneau du widget** :
    - **Choisissez la “source”** (colonne `Choice/ChoiceList`) : menu déroulant “Choisissez une source”.
@@ -200,7 +200,7 @@ The widget is a **single HTML file** (HTML + JS) that loads:
 1. Open your **Grist document** → add a **page** or a **view to an existing page**.
 2. Click **Custom** → select your data source → **Add to page**.
 3. In the **URL** field, **paste the GitHub Pages URL** of the widget:  
-   **https://github.com/Dycazo-by-Fastcube/Grist-Custom-Widget-Kanban**
+   **https://dycazo-by-fastcube.github.io/Grist-Custom-Widget-Kanban/**
 4. **Access level**: choose **Full** (required for drag-and-drop and `Choice` additions).
 5. In the **widget settings panel**:
    - **Select the “source”** (`Choice/ChoiceList` column) in the “Choose a source” dropdown.

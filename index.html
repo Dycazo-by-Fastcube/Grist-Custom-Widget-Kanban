@@ -11,8 +11,7 @@
     /* Tout passe en arrière-plan */
     body.is-dragging .kanban-card {
       opacity: 0.35;
-      filter: brightness(0.5);
-      filter: blur(1px);
+      filter: brightness(0.5) blur(1px);
     }
 
     /* Carte actuellement dragguée */
@@ -26,7 +25,7 @@
       box-shadow:
         0 10px 25px rgba(0, 0, 0, 0.25),
         0 0 0 2px rgba(16, 185, 129, 0.3);
-    } 
+    }
   </style>
 
 </head>
@@ -1561,7 +1560,7 @@
               "overflow-hidden",
               "focus:bg-emerald-50",           // Nouveau : background opaque en mode clair au focus
               "focus:dark:bg-emerald-900",   // Nouveau : background opaque en mode sombre au focus
-              "focus:opacity-100" 
+              "focus:opacity-100"
             );
             card.tabIndex = 0;
             let candidateCids = allColsMeta

@@ -16,21 +16,24 @@
 
     /* Carte actuellement dragguée */
     body.is-dragging .kanban-card.drag-active {
+      position: relative;
+      z-index: 999;
       opacity: 1 !important;
-      transform: scale(1.03);
       filter: none;
+
       pointer-events: auto;
-      z-index: 50;
+
       transform: scale(1.03);
+      background: white;
+      outline: 2px solid rgba(16, 185, 129, 0.9);  
+      outline-offset: 2px;
+
       box-shadow:
         0 10px 25px rgba(0, 0, 0, 0.25),
         0 0 0 2px rgba(16, 185, 129, 0.3);
     }
-
-    .drag-ghost {opacity: 1;}
-    body.is-dragging .kanban-card:not(.drag-ghost) {
-      opacity: 1;
-      filter: brightness(0.5) blur(1px);
+    .dark body.is-dragging .kanban-card.drag-active {
+      background: rgb(107 114 128); /* approx dark:bg-gray-500 */
     }
 
   </style>
@@ -1401,52 +1404,16 @@
         e.dataTransfer.effectAllowed = "move";
 
         // Focus Drag
-        document.body.classList.add("is-dragging");
         cardEl.classList.add("drag-active");
-
-        // --- Ghost clone ---
-        const ghost = cardEl.cloneNode(true);
-        ghost.classList.add("drag-host");
-        ghost.classList.add("drag-host");
-        ghost.classList.add("bg-emerald-50", "dark:bg-emerald-800");
-
-
-        // Récupère les dimensions exactes de la carte
-        const rect = cardEl.getBoundingClientRect();
-        ghost.style.width = `${rect.width}px`;
-        ghost.style.height = `${rect.height}px`;
-
-        // Styles pour le ghost
-        ghost.style.position = "absolute";
-        ghost.style.top = "-10000px";
-        ghost.style.left = "-10000px";
-        ghost.style.pointerEvents = "none";
-        ghost.style.opacity = "1";
-        ghost.style.transform = "none";
-        ghost.style.filter = "none";
-        ghost.style.zIndex = "9999"; // au-dessus de tout
-
-        // Effet visuel supplémentaire pour bien marquer le focus
-        cardEl.style.boxShadow = "0 0 0 2px #10B981 inset"; // bordure intérieure verte
-        cardEl.style.opacity = "0.8";
-        cardEl.style.transform = "scale(1.02)";
-
-        document.body.appendChild(ghost);
-        e.dataTransfer.setDragImage(ghost, rect.width / 2, rect.height / 2);
-
-        // Supprime le ghost après le premier frame pour éviter duplication
-        requestAnimationFrame(() => ghost.remove());
+        document.body.classList.add("is-dragging");
       });
 
       cardEl.addEventListener("dragend", () => {
+        // Reset visuel 
         document.body.classList.remove("is-dragging");
         cardEl.classList.remove("drag-active");
-        cardEl.style.boxShadow = "";
-        cardEl.style.opacity = "";
-        cardEl.style.transform = "";
-      });
+      })
     }
-
     function createKanban(leadHeader, wrapper, records, source, opts = {}) {
       const {
         showHeaders = true,
@@ -1726,14 +1693,14 @@
       columnEl.addEventListener("dragover", (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
-        columnEl.classList.add("ring-2", "ring-emerald-500");
+        columnEl.classList.add("ring-2", "ring-emerald-500", "bg-emerald-50");
       });
       columnEl.addEventListener("dragleave", () => {
-        columnEl.classList.remove("ring-2", "ring-emerald-500");
+        columnEl.classList.remove("ring-2", "ring-emerald-500", "bg-emerald-50");
       });
       columnEl.addEventListener("drop", async (e) => {
         e.preventDefault();
-        columnEl.classList.remove("ring-2", "ring-emerald-500");
+        columnEl.classList.remove("ring-2", "ring-emerald-500", "bg-emerald-50");
         const rowId = Number(e.dataTransfer.getData("rowId"));
         const fromHeader = e.dataTransfer.getData("fromHeader");
         const sourceCol = e.dataTransfer.getData("sourceColId");

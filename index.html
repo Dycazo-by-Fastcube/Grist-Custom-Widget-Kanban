@@ -9,33 +9,23 @@
 
   <style>
     /* Tout passe en arrière-plan */
-    body.is-dragging .kanban-card {
+    body.is-dragging .kanban-card:not(.drag-ghost) {
       opacity: 0.35;
       filter: brightness(0.5) blur(1px);
     }
 
     /* Carte actuellement dragguée */
     body.is-dragging .kanban-card.drag-active {
-      position: relative;
-      z-index: 999;
       opacity: 1 !important;
-      filter: none;
-
-      pointer-events: auto;
-
       transform: scale(1.03);
-      background: white;
-      outline: 2px solid rgba(16, 185, 129, 0.9);  
-      outline-offset: 2px;
-
+      filter: none;
+      pointer-events: auto;
+      z-index: 50;
+      transform: scale(1.03);
       box-shadow:
         0 10px 25px rgba(0, 0, 0, 0.25),
         0 0 0 2px rgba(16, 185, 129, 0.3);
     }
-    .dark body.is-dragging .kanban-card.drag-active {
-      background: rgb(107 114 128); /* approx dark:bg-gray-500 */
-    }
-
   </style>
 
 </head>
@@ -1403,16 +1393,44 @@
         e.dataTransfer.setData("sourceColId", sourceColId);
         e.dataTransfer.effectAllowed = "move";
 
-        // Focus Drag
+        const r = cardEl.getBoundingClientRect();
+
+        const ghost = cardEl.cloneNode(true);
+        ghost.classList.add("drag-ghost");
+
+        ghost.style.width = `${r.width}px`;
+        ghost.style.height = `${r.height}px`;
+
+        // Assurer un rendu plein
+        ghost.style.opacity = "1";
+        ghost.style.filter = "none";
+        ghost.style.transform = "none";
+        ghost.style.boxSizing = "border-box";
+
+        // Hors écran mais "mesurable"
+        ghost.style.position = "fixed";
+        ghost.style.top = "-10000px";
+        ghost.style.left = "-10000px";
+        ghost.style.pointerEvents = "none";
+        ghost.style.margin = "0";
+
+        document.body.appendChild(ghost);
+
+        // Centrer la drag image sous le curseur (optionnel)
+        e.dataTransfer.setDragImage(ghost, Math.round(r.width / 2), 20);
+
+        // Maintenant seulement : tes effets sur la page
         cardEl.classList.add("drag-active");
         document.body.classList.add("is-dragging");
+
+        // Nettoyage
+        requestAnimationFrame(() => ghost.remove());
       });
 
       cardEl.addEventListener("dragend", () => {
-        // Reset visuel 
         document.body.classList.remove("is-dragging");
         cardEl.classList.remove("drag-active");
-      })
+      });
     }
     function createKanban(leadHeader, wrapper, records, source, opts = {}) {
       const {
@@ -1693,14 +1711,14 @@
       columnEl.addEventListener("dragover", (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
-        columnEl.classList.add("ring-2", "ring-emerald-500", "bg-emerald-50");
+        columnEl.classList.add("ring-2", "ring-emerald-500");
       });
       columnEl.addEventListener("dragleave", () => {
-        columnEl.classList.remove("ring-2", "ring-emerald-500", "bg-emerald-50");
+        columnEl.classList.remove("ring-2", "ring-emerald-500");
       });
       columnEl.addEventListener("drop", async (e) => {
         e.preventDefault();
-        columnEl.classList.remove("ring-2", "ring-emerald-500", "bg-emerald-50");
+        columnEl.classList.remove("ring-2", "ring-emerald-500");
         const rowId = Number(e.dataTransfer.getData("rowId"));
         const fromHeader = e.dataTransfer.getData("fromHeader");
         const sourceCol = e.dataTransfer.getData("sourceColId");

@@ -2,1991 +2,2110 @@
 <html>
 
 <head>
-  <meta charset="utf-8" />
-  <title>Kanban</title>
-  <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="utf-8" />
+    <title>Kanban</title>
+    <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
 
-  <style>
-    /* Tout passe en arrière-plan */
-    body.is-dragging .kanban-card {
-      opacity: 0.35;
-      filter: brightness(0.5) blur(1px);
-    }
+    <style>
+        body.is-dragging .kanban-card:not(.drag-proxy) {
+            opacity: 0.35;
+            filter: brightness(0.5) blur(1px);
+        }
 
-    /* Carte actuellement dragguée */
-    body.is-dragging .kanban-card.drag-active {
-      opacity: 1 !important;
-      transform: scale(1.03);
-      filter: none;
-      pointer-events: auto;
-      z-index: 50;
-      transform: scale(1.03);
-      box-shadow:
-        0 10px 25px rgba(0, 0, 0, 0.25),
-        0 0 0 2px rgba(16, 185, 129, 0.3);
-    }
-  </style>
+        .drag-proxy {
+            position: fixed;
+            z-index: 9999;
+            pointer-events: none;
+            margin: 0;
+        }
+        .column.drag-over {
+            outline: 2px solid #10B981;
+            outline-offset: -2px;
+            transform: scale(1);
+            transition: transform 0.15s ease;
+        }
+
+        .column {
+            transition: transform 0.15s ease;
+        }
+
+        body.is-dragging .kanban-card.drag-proxy {
+            opacity: 1 !important;
+            filter: none !important;
+        }
+    </style>
 
 </head>
 
 <body class="w-full">
-  <div style="font-family: sans-serif; padding: 1em">
-    <h1 class="text-lg font-bold text-emerald-500 mb-4">Kanban</h1>
+    <div style="font-family: sans-serif; padding: 1em">
+        <h1 class="text-lg font-bold text-emerald-500 mb-4">Kanban</h1>
 
-    <div class="flex justify-start items-center gap-6 p-4 mb-3 bg-gray-50 dark:bg-gray-700 rounded">
-      <select name="sortby" id="sortBy" class="rounded py-2 px-3 text-xs shadow-md dark:bg-gray-500">
-        <option class="text-xs" value="none" selected>
-          Choisissez une source
-        </option>
-      </select>
+        <div class="flex justify-start items-center gap-6 p-4 mb-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <select name="sortby" id="sortBy" class="rounded py-2 px-3 text-xs shadow-md dark:bg-gray-500">
+                <option class="text-xs" value="none" selected>
+                    Choisissez une source
+                </option>
+            </select>
 
-      <select name="laneby" id="laneBy" class="rounded py-2 px-3 text-xs shadow-md dark:bg-gray-500">
-        <option class="text-xs" value="" selected>Regrouper par...</option>
-      </select>
+            <select name="laneby" id="laneBy" class="rounded py-2 px-3 text-xs shadow-md dark:bg-gray-500">
+                <option class="text-xs" value="" selected>Regrouper par...</option>
+            </select>
 
-      <button id="visBtn"
-        class="text-xs py-2 px-3 border-none bg-white rounded shadow-md dark:bg-gray-500 hover:bg-emerald-500 hover:text-white">
-        Afficher les colonnes
-      </button>
-      <button id="fieldsBtn"
-        class="text-xs py-2 px-3 border-none bg-white rounded dark:bg-gray-500 shadow-md hover:bg-emerald-500 hover:text-white">
-        Afficher les champs
-      </button>
+            <button id="visBtn"
+                class="text-xs py-2 px-3 border-none bg-white rounded shadow-md dark:bg-gray-500 hover:bg-emerald-500 hover:text-white">
+                Afficher les colonnes
+            </button>
+            <button id="fieldsBtn"
+                class="text-xs py-2 px-3 border-none bg-white rounded dark:bg-gray-500 shadow-md hover:bg-emerald-500 hover:text-white">
+                Afficher les champs
+            </button>
 
-      <button id="dateBtn"
-        class="text-xs py-2 px-3 border-none bg-white rounded dark:bg-slate-500 shadow-md hover:bg-emerald-500 hover:text-white">
-        Filtre date
-      </button>
+            <button id="dateBtn"
+                class="text-xs py-2 px-3 border-none bg-white rounded dark:bg-slate-500 shadow-md hover:bg-emerald-500 hover:text-white">
+                Filtre date
+            </button>
+        </div>
+
+        <div class="flex-col sm:flex-row flex-wrap sm:flex-nowrap w-full gap-4 items-start">
+            <div id="visPanel" class="p-2 w-full bg-white dark:bg-gray-700 rounded mb-3 hidden"></div>
+            <div id="fieldsPanel" class="p-2 w-full bg-white dark:bg-gray-700 rounded mb-3 hidden"></div>
+            <div id="datePanel" class="p-2 w-full bg-white dark:bg-gray-700 rounded mb-3 hidden"></div>
+        </div>
+
+        <div id="wrapper" class="text-xs w-full items-stretch justify-between flex gap-2 flex-col sm:flex-row"></div>
     </div>
 
-    <div class="flex-col sm:flex-row flex-wrap sm:flex-nowrap w-full gap-4 items-start">
-      <div id="visPanel" class="p-2 w-full bg-white dark:bg-gray-700 rounded mb-3 hidden"></div>
-      <div id="fieldsPanel" class="p-2 w-full bg-white dark:bg-gray-700 rounded mb-3 hidden"></div>
-      <div id="datePanel" class="p-2 w-full bg-white dark:bg-gray-700 rounded mb-3 hidden"></div>
-    </div>
+    <script>
+        // =====================================================================
+        // 0) BOOTSTRAP GRIST & ELEMENTS DOM
+        // =====================================================================
+        // Prépare l'API plugin et autorise la sélection par curseur depuis Grist
+        grist.ready({ requiredAccess: "full", allowSelectBy: true });
 
-    <div id="wrapper" class="text-xs w-full items-stretch justify-between flex gap-2 flex-col sm:flex-row"></div>
-  </div>
+        // Raccourcis vers les éléments de l'interface
+        const select = document.getElementById("sortBy");
+        const laneSelect = document.getElementById("laneBy");
+        const wrapper = document.getElementById("wrapper");
+        const visBtn = document.getElementById("visBtn");
+        const visPanel = document.getElementById("visPanel");
+        const fieldsBtn = document.getElementById("fieldsBtn");
+        const fieldsPanel = document.getElementById("fieldsPanel");
+        const dateBtn = document.getElementById("dateBtn");
+        const datePanel = document.getElementById("datePanel");
 
-  <script>
-    // =====================================================================
-    // 0) BOOTSTRAP GRIST & ELEMENTS DOM
-    // =====================================================================
-    // Prépare l'API plugin et autorise la sélection par curseur depuis Grist
-    grist.ready({ requiredAccess: "full", allowSelectBy: true });
+        // Constante d'étiquette pour la colonne "vide"
+        const empty = "(vide)";
 
-    // Raccourcis vers les éléments de l'interface
-    const select = document.getElementById("sortBy");
-    const laneSelect = document.getElementById("laneBy");
-    const wrapper = document.getElementById("wrapper");
-    const visBtn = document.getElementById("visBtn");
-    const visPanel = document.getElementById("visPanel");
-    const fieldsBtn = document.getElementById("fieldsBtn");
-    const fieldsPanel = document.getElementById("fieldsPanel");
-    const dateBtn = document.getElementById("dateBtn");
-    const datePanel = document.getElementById("datePanel");
-
-    // Constante d'étiquette pour la colonne "vide"
-    const empty = "(vide)";
-
-    // Etat global en mémoire (mis à jour au fil des callbacks Grist)
-    let allColsMeta = [];
-    let lastRecords = [];
-    let choices = [];
-    let currentTableId = null;
-    let widgetOptions = {};
-    let choicesInitialized = false;
-    let openLanes = new Set();
-    let currentCtx = {
-      headers: [],
-      groups: new Map(),
-      sourceColId: null,
-    };
-
-    // =====================================================================
-    // 1) HELPERS GÉNÉRIQUES (string, JSON, tests, normalisation)
-    // =====================================================================
-    // Supprime les accents pour comparer des libellés de manière robuste
-    function strNoAccent(str) {
-      return (str ?? "")
-        .toString()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-    }
-
-    // Normalise une clé (trim + sans accents + lowercase)
-    function norm(s) {
-      return (s ?? "")
-        .toString()
-        .trim()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase();
-    }
-
-    // Parse JSON sûr (retourne null si invalide)
-    function safeParse(maybeJson) {
-      if (!maybeJson) return null;
-      if (typeof maybeJson === "object") return maybeJson;
-      if (typeof maybeJson === "string") {
-        try {
-          return JSON.parse(maybeJson);
-        } catch {
-          return null;
-        }
-      }
-      return null;
-    }
-
-    // Détermine si une valeur est « vide » au sens d'affichage
-    function isEmptyValue(v) {
-      if (Array.isArray(v)) return v.length === 0;
-      return v === null || v === undefined || v === "";
-    }
-
-    // Crée un slug simple (pour id HTML/CSS)
-    function slug(s) {
-      return String(s ?? "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)/g, "");
-    }
-
-    // =====================================================================
-    // 2) CLÉS D'OPTIONS PERSISTÉES (widget options)
-    // =====================================================================
-    // Clé unique pour mémoriser la source de colonnes (une par vue)
-    function sourceKey(source) {
-      return "kanban:source";
-    }
-    // Clé pour mémoriser les colonnes (headers) cachées d'une source
-    function hiddenKey(colId) {
-      return `kanban:hidden:${colId}`;
-    }
-    // Clé pour mémoriser les champs masqués dans les cartes, scoped table+source
-    function hiddenFieldsKey(tableId, sourceColId) {
-      return `kanban:hiddenFields:${tableId}:${sourceColId}`;
-    }
-    const DATE_FILTER_FIELD_KEY = "kanban:dateFilter:field";
-    const DATE_FILTER_HIDE_PAST_KEY = "kanban:dateFilter:hidePast";
-
-    // =====================================================================
-    // 3) MÉTA-DONNÉES COLONNES & TYPES (Grist)
-    // =====================================================================
-    // Récupère une métadonnée de colonne par id/colId
-    function getColMetaById(colId) {
-      return allColsMeta.find((c) => (c.colId || c.id) === colId) || null;
-    }
-
-    // Extrait/parse les widgetOptions d'une colonne
-    function parseWidgetOptions(meta) {
-      return safeParse(meta?.widgetOptions) || null;
-    }
-
-    // Déduit un type "fonctionnel" pour le rendu (Choice, Number, ...)
-    function getFieldType(meta) {
-      if (!meta) return "Unknown";
-      const raw = String(meta.type || "").toLowerCase();
-      const wo = parseWidgetOptions(meta);
-      const w = (wo?.widget || "").toLowerCase();
-      if (w === "choice") return "Choice";
-      if (w === "choicelist") return "ChoiceList";
-      if (raw.startsWith("reflist")) return "RefList";
-      if (raw.startsWith("ref")) return "Ref";
-      if (raw.includes("choice"))
-        return raw.includes("list") ? "ChoiceList" : "Choice";
-      if (raw.includes("date") && raw.includes("time")) return "DateTime";
-      if (raw.includes("date")) return "Date";
-      if (raw.includes("bool")) return "Bool";
-      if (raw.includes("attach")) return "Attachments";
-      if (raw.includes("num") || raw.includes("int") || raw.includes("float"))
-        return "Number";
-      if (raw.includes("text") || raw === "") return "Text";
-      return meta.type || "Text";
-    }
-
-    // =====================================================================
-    // 4) COULEURS & CHOIX (utils couleurs pour Choice/ChoiceList)
-    // =====================================================================
-    function normalizeHex(c) {
-      if (!c || typeof c !== "string") return null;
-      let v = c.trim();
-      if (!v.startsWith("#") && /^[0-9a-fA-F]{6,8}$/.test(v)) v = "#" + v;
-      return v;
-    }
-    function pickBg(opt) {
-      const c =
-        opt?.fillColor ??
-        opt?.fillcolor ??
-        opt?.color ??
-        opt?.bgColor ??
-        null;
-      return normalizeHex(c);
-    }
-    function pickFg(opt) {
-      const c = opt?.textColor ?? opt?.textcolor ?? null;
-      return normalizeHex(c);
-    }
-    function safeParseWidget(meta) {
-      const raw = meta?.widgetOptions;
-      if (!raw) return null;
-      if (typeof raw === "object") return raw;
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    }
-    function buildChoiceColorMap(meta) {
-      const wo = safeParse(meta?.widgetOptions) || {};
-      const map = new Map();
-      const push = (label, opt) => {
-        const L = (label ?? "").toString().trim();
-        if (!L) return;
-        const entry = { bg: pickBg(opt), fg: pickFg(opt) };
-        map.set(L, entry);
-        map.set(norm(L), entry);
-      };
-      if (Array.isArray(wo.choices)) {
-        for (const c of wo.choices) push(c?.label ?? c?.value, c);
-      } else if (wo.choicesById && typeof wo.choicesById === "object") {
-        for (const id of Object.keys(wo.choicesById)) {
-          const c = wo.choicesById[id];
-          push(c?.label ?? c?.value, c);
-        }
-      }
-      return map;
-    }
-    const FALLBACK_COLORS = [
-      "#10B981",
-      "#3B82F6",
-      "#F59E0B",
-      "#EF4444",
-      "#8B5CF6",
-      "#EC4899",
-      "#14B8A6",
-      "#F97316",
-    ];
-    function hashStringToIndex(str, mod) {
-      let h = 0;
-      for (let i = 0; i < str.length; i++) {
-        h = (h * 31 + str.charCodeAt(i)) | 0;
-      }
-      return Math.abs(h) % mod;
-    }
-    function mapFromChoiceOptions(wo) {
-      const m = new Map();
-      const co =
-        wo?.choiceOptions || wo?.choicesOptions || wo?.choice_options;
-      if (co && typeof co === "object") {
-        for (const [key, opt] of Object.entries(co)) {
-          const label = (opt?.label ?? key ?? "").toString().trim();
-          const entry = { bg: pickBg(opt), fg: pickFg(opt) };
-          if (!label) continue;
-          m.set(label, entry);
-          m.set(norm(label), entry);
-          m.set(norm(key), entry);
-        }
-      }
-      return m;
-    }
-    function mapFromChoicesArrays(wo) {
-      const m = new Map();
-      const push = (c) => {
-        const label = (c?.label ?? c?.value ?? "").toString().trim();
-        if (!label) return;
-        const entry = { bg: pickBg(c), fg: pickFg(c) };
-        m.set(label, entry);
-        m.set(norm(label), entry);
-      };
-      if (Array.isArray(wo?.choices)) {
-        for (const c of wo.choices) push(c);
-      } else if (wo?.choicesById && typeof wo.choicesById === "object") {
-        for (const id of Object.keys(wo.choicesById))
-          push(wo.choicesById[id]);
-      }
-      return m;
-    }
-    const choiceColorCaches = new Map();
-    function getColorCache(meta) {
-      const colKey = (meta?.colId || meta?.id || "??").toString();
-      if (!choiceColorCaches.has(colKey)) {
-        const wo = safeParseWidget(meta) || {};
-        const cache = new Map();
-        for (const [k, v] of mapFromChoicesArrays(wo)) cache.set(k, v);
-        for (const [k, v] of mapFromChoiceOptions(wo)) cache.set(k, v);
-        choiceColorCaches.set(colKey, cache);
-      }
-      return choiceColorCaches.get(colKey);
-    }
-    function colorForLabel(meta, label) {
-      const L = String(label ?? "");
-      const cache = getColorCache(meta);
-      const hit = cache.get(L) || cache.get(norm(L));
-      if (hit && (hit.bg || hit.fg)) return hit;
-      const idx = hashStringToIndex(L, FALLBACK_COLORS.length);
-      return { bg: FALLBACK_COLORS[idx], fg: "#111827" };
-    }
-
-    // =====================================================================
-    // 5) DÉTECTION STYLE D'AFFICHAGE (nombres, dates, etc.)
-    // =====================================================================
-    function getDisplayStyle(meta) {
-      const wo = parseWidgetOptions(meta) || {};
-      const rawType = String(meta?.type || "").toLowerCase();
-      const widget = (wo.widget || "").toLowerCase();
-      const numMode = (wo.numMode || "").toLowerCase();
-      const numFormat = wo.numFormat || wo.format || "";
-      const decimals = wo.decimals ?? wo.precision ?? wo.fracDigits ?? null;
-      const currency = wo.currency || wo.currencyCode || wo.symbol || null;
-      const unit = wo.unit || wo.suffix || null;
-      const dateFormat = wo.dateFormat || null;
-      const timeFormat = wo.timeFormat || null;
-      const align = wo.align || wo.alignment || null;
-      const isNumberLike =
-        rawType.includes("num") ||
-        rawType.includes("number") ||
-        rawType.includes("int") ||
-        rawType.includes("float") ||
-        rawType === "numeric";
-      const looksPercent =
-        numMode === "percent" ||
-        widget === "percent" ||
-        /%/.test(String(numFormat)) ||
-        unit === "%" ||
-        (isNumberLike && wo.percent === true);
-      const looksCurrency =
-        numMode === "currency" ||
-        widget === "currency" ||
-        currency != null ||
-        /[$€£¥]/.test(String(numFormat));
-      const isDateTime = rawType.includes("datetime");
-      const isDate = rawType.includes("date") && !isDateTime;
-      const isTime = rawType.includes("time") && !isDateTime;
-      if (isNumberLike) {
-        if (looksPercent)
-          return {
-            kind: "percent",
-            decimals: decimals ?? 0,
-            format: numFormat || null,
-            unit: unit || "%",
-            align: align || "right",
-          };
-        if (looksCurrency)
-          return {
-            kind: "currency",
-            currency: currency || guessCurrencyFromFormat(numFormat) || "EUR",
-            decimals: decimals ?? 2,
-            format: numFormat || null,
-            align: align || "right",
-          };
-        return {
-          kind: "number",
-          decimals: decimals ?? guessDecimalsFromFormat(numFormat),
-          format: numFormat || null,
-          align: align || "right",
-          unit: unit || null,
+        // Etat global en mémoire (mis à jour au fil des callbacks Grist)
+        let allColsMeta = [];
+        let lastRecords = [];
+        let choices = [];
+        let currentTableId = null;
+        let widgetOptions = {};
+        let choicesInitialized = false;
+        let openLanes = new Set();
+        let currentCtx = {
+            headers: [],
+            groups: new Map(),
+            sourceColId: null,
         };
-      }
-      if (isDateTime)
-        return {
-          kind: "datetime",
-          dateFormat: dateFormat || guessDateFormat(dateFormat),
-          timeFormat: timeFormat || guessTimeFormat(timeFormat),
-          align: align || "left",
-        };
-      if (isDate)
-        return {
-          kind: "date",
-          dateFormat: dateFormat || guessDateFormat(dateFormat),
-          align: align || "left",
-        };
-      if (isTime)
-        return {
-          kind: "time",
-          timeFormat: timeFormat || guessTimeFormat(numFormat),
-          align: align || "left",
-        };
-      return {
-        kind: "default",
-        align: align || (rawType.includes("text") ? "left" : "left"),
-      };
-    }
-    // Inférences simples de formatage
-    function guessCurrencyFromFormat(fmt) {
-      if (!fmt) return null;
-      if (fmt.includes("€")) return "EUR";
-      if (fmt.includes("$")) return "USD";
-      if (fmt.includes("£")) return "GBP";
-      if (fmt.includes("¥")) return "JPY";
-      return null;
-    }
-    function guessDecimalsFromFormat(fmt) {
-      if (!fmt) return null;
-      const m = fmt.match(/\.0+/);
-      return m ? m[0].length - 1 : null;
-    }
-    function guessDateFormat(fmt) {
-      if (!fmt) return null;
-      if (/YYYY.*MM.*DD/i.test(fmt)) return "YYYY-MM-DD";
-      if (/DD.*MM.*YYYY/i.test(fmt)) return "DD/MM/YYYY";
-      if (/MM.*DD.*YYYY/i.test(fmt)) return "MM/DD/YYYY";
-      return null;
-    }
-    function guessTimeFormat(fmt) {
-      if (!fmt) return null;
-      if (/HH.*mm.*ss/i.test(fmt)) return "HH:mm:ss";
-      if (/HH.*mm/i.test(fmt)) return "HH:mm";
-      if (/hh.*mm.*a/i.test(fmt)) return "hh:mm a";
-      return null;
-    }
 
-    // Contexte d'internationalisation issu de l'URL / navigateur
-    const DOC_ENV = (() => {
-      const p = new URLSearchParams(location.search);
-      const tz =
-        Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Paris";
-      return {
-        culture: p.get("culture") || navigator.language || "fr-FR",
-        currency: p.get("currency") || "EUR",
-        timeZone: p.get("timeZone")
-          ? decodeURIComponent(p.get("timeZone"))
-          : tz,
-        language: p.get("language") || navigator.language || "fr-FR",
-      };
-    })();
-    function intlOptionsFromGristPatterns(
-      datePattern = "",
-      timePattern = "",
-      { timeZone } = {}
-    ) {
-      const o = { timeZone };
-      if (datePattern) {
-        if (datePattern.includes("YYYY")) o.year = "numeric";
-        else if (datePattern.includes("YY")) o.year = "2-digit";
-        if (datePattern.includes("MMMM")) o.month = "long";
-        else if (datePattern.includes("MMM")) o.month = "short";
-        else if (datePattern.includes("MM")) o.month = "2-digit";
-        else if (datePattern.includes("M")) o.month = "numeric";
-        if (datePattern.includes("DD")) o.day = "2-digit";
-        else if (datePattern.includes("Do") || datePattern.includes("D"))
-          o.day = "numeric";
-      }
-      if (timePattern) {
-        const hasSeconds = timePattern.includes("ss");
-        const hasMinutes =
-          timePattern.includes("mm") || timePattern.includes("m");
-        const is12h = timePattern.includes("h");
-        const is24h = timePattern.includes("HH");
-        if (is12h) {
-          o.hour = timePattern.includes("hh") ? "2-digit" : "numeric";
-          o.hour12 = true;
-        } else if (is24h) {
-          o.hour = "2-digit";
-          o.hour12 = false;
-          o.hourCycle = "h23";
+        // =====================================================================
+        // 1) HELPERS GÉNÉRIQUES (string, JSON, tests, normalisation)
+        // =====================================================================
+        // Supprime les accents pour comparer des libellés de manière robuste
+        function strNoAccent(str) {
+            return (str ?? "")
+                .toString()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "");
         }
-        if (hasMinutes)
-          o.minute = timePattern.includes("mm") ? "2-digit" : "numeric";
-        if (hasSeconds) o.second = "2-digit";
-        if (timePattern.includes(" z")) o.timeZoneName = "short";
-      }
-      return o;
-    }
 
-    // =====================================================================
-    // 6) PERSISTENCE D'OPTIONS (lecture/écriture)
-    // =====================================================================
-    function getStoredSource(source) {
-      const v = widgetOptions?.[sourceKey()] || "";
-      return v;
-    }
-    function getHiddenFor(colId) {
-      const v = widgetOptions?.[hiddenKey(colId)];
-      return Array.isArray(v) ? v : [];
-    }
-    function getHiddenFields(tableId, sourceColId) {
-      const v = widgetOptions?.[hiddenFieldsKey(tableId, sourceColId)];
-      return Array.isArray(v) ? v : [];
-    }
-    async function setHiddenFields(tableId, sourceColId, arr) {
-      widgetOptions[hiddenFieldsKey(tableId, sourceColId)] = arr;
-      await grist.widgetApi.setOption(
-        hiddenFieldsKey(tableId, sourceColId),
-        arr
-      );
-    }
-    function hiddenFieldsModeKey(tableId, sourceColId) {
-      return `kanban:hiddenFieldsMode:${tableId}:${sourceColId}`;
-    }
-    function getHiddenFieldsMode(tableId, sourceColId) {
-      const v = widgetOptions?.[hiddenFieldsModeKey(tableId, sourceColId)];
-      return v === "all" || v === "custom" ? v : "default";
-    }
-    async function setHiddenFieldsMode(tableId, sourceColId, mode) {
-      await grist.widgetApi.setOption(
-        hiddenFieldsModeKey(tableId, sourceColId),
-        mode
-      );
-      widgetOptions[hiddenFieldsModeKey(tableId, sourceColId)] = mode;
-    }
-    async function setStoredSource(source) {
-      await grist.widgetApi.setOption(sourceKey(), source);
-    }
-    async function setHiddenFor(colId, arr) {
-      widgetOptions[hiddenKey(colId)] = arr;
-      await grist.widgetApi.setOption(hiddenKey(colId), arr);
-    }
-
-    function getDateFilterField() {
-      return widgetOptions?.[DATE_FILTER_FIELD_KEY] || "";
-    }
-    async function setDateFilterField(colId) {
-      await grist.widgetApi.setOption(DATE_FILTER_FIELD_KEY, colId || "");
-    }
-
-    function getHidePastFlag() {
-      return widgetOptions?.[DATE_FILTER_HIDE_PAST_KEY];
-    }
-    async function setHidePastFlag(flag) {
-      widgetOptions[DATE_FILTER_HIDE_PAST_KEY] = !!flag;
-      await grist.widgetApi.setOption(DATE_FILTER_HIDE_PAST_KEY, !!flag);
-    }
-
-    // =====================================================================
-    // 7) INDEX MÉTA & RÉCUPÉRATION DES COLONNES
-    // =====================================================================
-    let metaIndex = new Map();
-    function rebuildMetaIndex() {
-      metaIndex.clear();
-      for (const c of allColsMeta) {
-        const cid = c.colId || c.id;
-        if (cid) metaIndex.set(String(cid), c);
-        if (c.id != null) metaIndex.set(String(c.id), c);
-        if (c.label) metaIndex.set(String(c.label), c);
-      }
-    }
-    function getColMetaByAnyKey(key) {
-      return metaIndex.get(String(key)) || null;
-    }
-
-    // Renvoie les métadonnées de toutes les colonnes de la table active
-    async function getAllColumns() {
-      const table = await grist.getTable();
-      const tableId = await table._platform.getTableId();
-      const tables = await grist.docApi.fetchTable("_grist_Tables");
-      const columns = await grist.docApi.fetchTable("_grist_Tables_column");
-      const fields = Object.keys(columns);
-      const tableColumns = [];
-      if (!tableId) {
-        console.log("Aucun id de table trouvé");
-        return tableColumns;
-      }
-      const tableRef = tables.id[tables.tableId.indexOf(tableId)];
-      for (const index in columns.parentId) {
-        if (columns.parentId[index] === tableRef) {
-          tableColumns.push(
-            Object.fromEntries(fields.map((f) => [f, columns[f][index]]))
-          );
+        // Normalise une clé (trim + sans accents + lowercase)
+        function norm(s) {
+            return (s ?? "")
+                .toString()
+                .trim()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase();
         }
-      }
-      return tableColumns;
-    }
-    function debugDumpColumnFormats() {
-      console.group("GRIST Column Formats");
-      for (const c of allColsMeta) {
-        const colId = c.colId || c.id;
-        const t = getFieldType(c);
-        const style = getDisplayStyle(c);
-      }
-      console.groupEnd();
-    }
 
-    // Id de table courant, récupéré une fois
-    async function initCurrentTableId() {
-      if (currentTableId) return currentTableId;
-      const table = await grist.getTable();
-      currentTableId = await table._platform.getTableId();
-      return currentTableId;
-    }
-
-    // Grist -> options du widget
-    grist.onOptions((opts) => {
-      widgetOptions = opts || {};
-    });
-
-    // =====================================================================
-    // 8) HELPERS CHOICES (détection Choice/ChoiceList, extraction ordre)
-    // =====================================================================
-    function isChoiceLike(colMeta) {
-      const wo = safeParse(colMeta?.widgetOptions);
-      return (
-        wo?.widget === "Choice" ||
-        wo?.widget === "ChoiceList" ||
-        !!wo?.choices ||
-        !!wo?.choicesById
-      );
-    }
-    function getChoicesFromMeta(colMeta) {
-      const wo = safeParse(colMeta?.widgetOptions);
-      if (!wo) return [];
-      let result = [];
-      if (wo && Array.isArray(wo.choices)) {
-        for (const c of wo.choices) {
-          let label;
-          if (typeof c === "string") {
-            label = c;
-          } else if (c && (c.label != null || c.value != null)) {
-            label = c.label != null ? c.label : c.value;
-          } else {
-            label = "";
-          }
-          if (label) result.push(label);
+        // Parse JSON sûr (retourne null si invalide)
+        function safeParse(maybeJson) {
+            if (!maybeJson) return null;
+            if (typeof maybeJson === "object") return maybeJson;
+            if (typeof maybeJson === "string") {
+                try {
+                    return JSON.parse(maybeJson);
+                } catch {
+                    return null;
+                }
+            }
+            return null;
         }
-        return result;
-      }
-      if (wo && typeof wo.choicesById === "object") {
-        for (const key of Object.keys(wo.choicesById)) {
-          const c = wo.choicesById[key];
-          const label = (c && (c.label ?? c.value)) || "";
-          if (label) result.push(label);
+
+        // Détermine si une valeur est « vide » au sens d'affichage
+        function isEmptyValue(v) {
+            if (Array.isArray(v)) return v.length === 0;
+            return v === null || v === undefined || v === "";
         }
-        return result;
-      }
-      return result;
-    }
 
-    // =====================================================================
-    // 8b) HELPERS DATES (détection Date/DateTime, extraction ordre)
-    // =====================================================================
-    // Vrai si la colonne est de type Date ou DateTime (type brut ou widget).
-    function isDateLike(colMeta) {
-      const t = String(colMeta?.type || "").toLowerCase();
-      const w = String(
-        safeParse(colMeta?.widgetOptions)?.widget || ""
-      ).toLowerCase();
-      return t.includes("date") || w === "date" || w === "datetime";
-    }
-
-    // Renvoie une liste de colonnes Date/DateTime {id, colId, label, type}
-    function getDateColumns(allColsMeta) {
-      return (allColsMeta || []).filter(isDateLike).map((c) => ({
-        id: c.id,
-        colId: c.colId || c.id,
-        label: c.label || c.colId || "",
-        type: c.type || "Date",
-      }));
-    }
-
-    // Parse robuste d'une valeur de date venant d'un record (string | number | Date | null)
-    function toDate(value) {
-      if (value == null) return null;
-      if (value instanceof Date) return new Date(value.getTime());
-      if (typeof value === "number") return new Date(value);
-      if (typeof value === "string") {
-        const d = new Date(value);
-        return isNaN(d.getTime()) ? null : d;
-      }
-      // objets Grist exotiques -> on tente un cast
-      const d = new Date(value);
-      return isNaN(d.getTime()) ? null : d;
-    }
-
-    // Vrai si d est strictement avant "aujourd'hui" (en ignorant l'heure)
-    function isPastDate(d, now = new Date()) {
-      if (!(d instanceof Date)) return false;
-      const todayStart = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate()
-      );
-      return d < todayStart;
-    }
-
-    // =====================================================================
-    // 8c) HELPERS LANE
-    // =====================================================================
-    function labelForLane(meta, raw) {
-      if (!meta) return String(raw ?? "");
-      const ft = getFieldType(meta);
-
-      if (ft === "ChoiceList" && Array.isArray(raw)) {
-        return (raw.length ? raw : [empty]).map((v) => String(v));
-      }
-
-      if (ft === "Choice") {
-        const s = String(raw ?? "");
-        return s ? [s] : [empty];
-      }
-
-      if (ft === "Ref") {
-        const id = refIdFromAny(raw);
-        return [id != null ? `#${id}` : empty];
-      }
-
-      if (ft === "RefList" && Array.isArray(raw)) {
-        const ids = refListIdsFromAny(raw);
-        return ids.length ? ids.map((id) => `#${id}`) : [empty];
-      }
-
-      if (ft === "Date" || ft === "DateTime" || ft === "Time") {
-        const d = toDate(raw);
-        if (!d) return [empty];
-
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        return [`${y}-${m}-${day}`];
-      }
-
-      const s = raw == null || raw === "" ? empty : String(raw);
-      return [s];
-    }
-
-    // Regroupe les records par laneKey (le champ choisi)
-    function groupRecordsByLane(records, laneColId) {
-      if (!laneColId) return { order: [], groups: new Map() };
-
-      const meta = getColMetaByAnyKey(laneColId);
-      const map = new Map();
-      const order = [];
-
-      for (const r of records || []) {
-        const buckets = labelForLane(meta, r[laneColId]);
-        for (const label of buckets) {
-          if (!map.has(label)) {
-            map.set(label, []);
-            order.push(label);
-          }
-          map.get(label).push(r);
+        // Crée un slug simple (pour id HTML/CSS)
+        function slug(s) {
+            return String(s ?? "")
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/(^-|-$)/g, "");
         }
-      }
 
-      if (order.length === 0) {
-        map.set(empty, records || []);
-        order.push(empty);
-      }
-      return { order, groups: map };
-    }
-
-    function syncHorizontalScroll(elements) {
-      let lock = false;
-      elements.forEach((el) => {
-        el.addEventListener("scroll", () => {
-          if (lock) return;
-          lock = true;
-          const x = el.scrollLeft;
-          elements.forEach((other) => {
-            if (other !== el) other.scrollLeft = x;
-          });
-          lock = false;
-        });
-      });
-    }
-    // =====================================================================
-    // 9) RENDU DES VALEURS (HTML) & COMPOSANTS D'UI
-    // =====================================================================
-    // Construit les en-têtes (y compris la colonne « (vide) »)
-    function renderHeader(source, records) {
-      const order = getChoicesFromMeta(source);
-      // wrapper.innerHTML = "";
-      const headers = order.map((value, index) => ({ index, value }));
-      headers.unshift({ index: 0, value: empty });
-      return headers;
-    }
-    // Filtre la liste d'en-têtes selon les colonnes masquées
-    function buildVisibleHeaders(colMeta, allHeaders) {
-      const colId = colMeta.colId || colMeta.id;
-      const hidden = new Set(getHiddenFor(colId).map(norm));
-      return allHeaders.filter((h) => !hidden.has(norm(h.value)));
-    }
-
-    // Petits helpers de rendu spécifiques
-    function isNil(v) {
-      return v === null || v === undefined;
-    }
-    function refIdFromAny(v) {
-      if (isNil(v)) return null;
-      if (typeof v === "number" || typeof v === "string") return v;
-      if (typeof v === "object") {
-        if ("id" in v) return v.id;
-        if ("rowId" in v) return v.rowId;
-        if ("_rowId" in v) return v._rowId;
-      }
-      return null;
-    }
-    function refListIdsFromAny(arr) {
-      if (!Array.isArray(arr)) return [];
-      return arr.map(refIdFromAny).filter((x) => !isNil(x));
-    }
-    function renderRef(raw) {
-      const id = refIdFromAny(raw);
-      const span = document.createElement("span");
-      span.className =
-        "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded bg-gray-200";
-      span.textContent = isNil(id) ? "" : `#${id}`;
-      return span;
-    }
-    function renderRefList(raw) {
-      const ids = refListIdsFromAny(raw);
-      const wrapper = document.createElement("div");
-      if (ids.length > 0) {
-        for (const id of ids) {
-          const span = document.createElement("span");
-          span.className =
-            "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded bg-gray-200";
-          span.textContent = `#${id}`;
-          wrapper.appendChild(span);
+        // =====================================================================
+        // 2) CLÉS D'OPTIONS PERSISTÉES (widget options)
+        // =====================================================================
+        // Clé unique pour mémoriser la source de colonnes (une par vue)
+        function sourceKey(source) {
+            return "kanban:source";
         }
-      }
-      return wrapper;
-    }
+        // Clé pour mémoriser les colonnes (headers) cachées d'une source
+        function hiddenKey(colId) {
+            return `kanban:hidden:${colId}`;
+        }
+        // Clé pour mémoriser les champs masqués dans les cartes, scoped table+source
+        function hiddenFieldsKey(tableId, sourceColId) {
+            return `kanban:hiddenFields:${tableId}:${sourceColId}`;
+        }
+        const DATE_FILTER_FIELD_KEY = "kanban:dateFilter:field";
+        const DATE_FILTER_HIDE_PAST_KEY = "kanban:dateFilter:hidePast";
 
-    function formatValueForDisplay(value, style) {
-      if (value == null || value === "") return "";
-      if (style?.kind === "percent") {
-        const decimals = style.decimals ?? 0;
-        const n =
-          Math.abs(Number(value)) <= 1 ? Number(value) * 100 : Number(value);
-        return `${n.toLocaleString(DOC_ENV.culture, {
-          minimumFractionDigits: decimals,
-          maximumFractionDigits: decimals,
-        })} %`;
-      }
-      if (style?.kind === "currency") {
-        const decimals = style.decimals ?? 2;
-        const ccy = style.currency || DOC_ENV.currency || "EUR";
-        return Number(value).toLocaleString(DOC_ENV.culture, {
-          style: "currency",
-          currency: ccy,
-          minimumFractionDigits: decimals,
-          maximumFractionDigits: decimals,
-        });
-      }
-      if (style?.kind === "number") {
-        const decimals = style.decimals ?? 0;
-        return Number(value).toLocaleString(DOC_ENV.culture, {
-          minimumFractionDigits: decimals,
-          maximumFractionDigits: decimals,
-        });
-      }
-      return String(value);
-    }
-    function renderDate(value) {
-      if (!value) return "";
-      return d.toLocaleDateString(DOC_ENV.culture, {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      });
-    }
-    function renderBool(value) {
-      const wrap = document.createElement("span");
-      wrap.className = "inline-flex items-center gap-1";
-      const icon = document.createElement("span");
-      icon.className =
-        "inline-flex items-center justify-center w-4 h-4 rounded border";
-      if (value === true) {
-        icon.classList.add(
-          "bg-emerald-500",
-          "border-emerald-500",
-          "text-white"
-        );
-        icon.textContent = "✓";
-      } else if (value === false) {
-        icon.classList.add(
-          "bg-transparent",
-          "border-gray-300",
-          "text-gray-400"
-        );
-        icon.textContent = "✕";
-      } else {
-        icon.classList.add(
-          "bg-transparent",
-          "border-gray-300",
-          "text-gray-300"
-        );
-        icon.textContent = "–";
-      }
-      wrap.appendChild(icon);
-      return wrap;
-    }
-    function renderChoice(meta, raw) {
-      const label = String(raw ?? "").trim();
-      const span = document.createElement("span");
-      span.className = "inline-flex items-center gap-1";
-      const dot = document.createElement("span");
-      dot.className = "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded";
-      const { bg, fg } = colorForLabel(meta, label);
-      if (bg) dot.style.backgroundColor = bg;
-      if (fg) span.style.color = fg;
-      span.appendChild(dot);
-      dot.appendChild(document.createTextNode(label));
-      return span;
-    }
-    function renderChoiceList(meta, arr) {
-      const frag = document.createElement("div");
-      frag.className = "flex flex-wrap";
-      (arr || []).forEach((val) => {
-        const { bg, fg } = colorForLabel(meta, String(val).trim());
-        const chip = document.createElement("span");
-        chip.className = "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded";
-        if (bg) chip.style.backgroundColor = bg;
-        if (fg) chip.style.color = fg;
-        chip.textContent = val;
-        frag.appendChild(chip);
-      });
-      return frag;
-    }
-    // Rendu générique d'un champ selon son type (retourne un élément DOM)
-    function renderFieldValue(meta, fieldType, style, raw) {
-      if (fieldType === "Bool") return renderBool(raw);
-      if (fieldType === "ChoiceList" && Array.isArray(raw))
-        return renderChoiceList(meta, raw);
-      if (fieldType === "Choice" && typeof raw === "string")
-        return renderChoice(meta, raw);
-      if (fieldType === "Ref") return renderRef(raw);
-      if (fieldType === "RefList") return renderRefList(raw);
-      if (
-        style?.kind === "number" ||
-        style?.kind === "currency" ||
-        style?.kind === "percent"
-      ) {
-        const p = document.createElement("p");
-        p.textContent = formatValueForDisplay(raw, style);
-        if (style?.align === "right")
-          p.classList.add("text-right", "self-stretch");
-        return p;
-      }
-      if (
-        style?.kind === "date" ||
-        style?.kind === "datetime" ||
-        style?.kind === "time"
-      ) {
-        const p = document.createElement("p");
-        const dateObj = new Date(raw);
-        const locale = DOC_ENV.culture || navigator.language || "fr-FR";
-        const tz =
-          DOC_ENV.timeZone ||
-          Intl.DateTimeFormat().resolvedOptions().timeZone ||
-          "Europe/Paris";
-        const datePattern = style?.dateFormat || "";
-        const timePattern = style?.timeFormat || "";
-        const options = intlOptionsFromGristPatterns(
-          datePattern,
-          timePattern,
-          { timeZone: tz }
-        );
-        p.textContent = new Intl.DateTimeFormat(locale, options).format(
-          dateObj
-        );
-        if (style?.align === "right")
-          p.classList.add("text-right", "self-stretch");
-        return p;
-      }
-      const p = document.createElement("p");
-      if (raw !== null && raw !== undefined) {
-        p.textContent =
-          typeof raw === "object" ? JSON.stringify(raw) : String(raw);
-      } else {
-        p.textContent = "—";
-      }
-      p.classList.add("text-gray-800", "w-full");
-      return p;
-    }
+        // =====================================================================
+        // 3) MÉTA-DONNÉES COLONNES & TYPES (Grist)
+        // =====================================================================
+        // Récupère une métadonnée de colonne par id/colId
+        function getColMetaById(colId) {
+            return allColsMeta.find((c) => (c.colId || c.id) === colId) || null;
+        }
 
-    // =====================================================================
-    // 10) PANNEAUX D'OPTIONS (headers/champs visibles)
-    // =====================================================================
-    function renderVisibilityUI(colMeta) {
-      const colId = colMeta.colId || colMeta.id;
-      const all = [empty, ...getChoicesFromMeta(colMeta)];
-      const hidden = new Set(getHiddenFor(colId).map(norm));
-      visPanel.innerHTML =
-        "<div class='font-medium mb-2 text-xs font-bold'>Colonnes :</div>";
-      const list = document.createElement("div");
-      list.className = "grid grid-cols-2 gap-1 text-xs";
-      visPanel.appendChild(list);
-      for (const label of all) {
-        const row = document.createElement("label");
-        row.className = "flex items-center gap-2  text-xs";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = !hidden.has(norm(label));
-        cb.addEventListener("change", async () => {
-          const cur = new Set(getHiddenFor(colId).map(norm));
-          const key = norm(label);
-          if (cb.checked) cur.delete(key);
-          else cur.add(key);
-          await setHiddenFor(colId, Array.from(cur));
-          renderBoard(colMeta, lastRecords, colId);
-          renderVisibilityUI(colMeta);
-        });
-        const span = document.createElement("span");
-        span.textContent = label;
-        row.appendChild(cb);
-        row.appendChild(span);
-        list.appendChild(row);
-      }
-    }
-    const visClass = visPanel.classList;
-    visBtn.addEventListener("click", () => {
-      const isHidden = visClass.toggle("hidden");
-      visBtn.textContent = `${isHidden ? "Afficher les colonnes" : "Masquer les colonnes"
-        }`;
-    });
+        // Extrait/parse les widgetOptions d'une colonne
+        function parseWidgetOptions(meta) {
+            return safeParse(meta?.widgetOptions) || null;
+        }
 
-    // Ajout programmatique d'une option de Choice/ChoiceList dans la colonne source
-    async function addChoiceToSourceColumn(sourceColId, newLabel) {
-      newLabel = String(newLabel || "").trim();
-      if (!newLabel) return;
-      const meta = allColsMeta.find((c) => (c.colId || c.id) === sourceColId);
-      if (!meta) throw new Error("Colonne source introuvable");
-      const curWO = safeParse(meta.widgetOptions) || {};
-      const wo = JSON.parse(JSON.stringify(curWO));
-      const hasChoicesArray = Array.isArray(wo.choices);
-      const hasChoicesById =
-        wo.choicesById && typeof wo.choicesById === "object";
-      const toStringArray = (arr) => {
-        const out = [];
-        for (const c of arr) {
-          if (typeof c === "string") out.push(c);
-          else if (
-            c &&
-            (typeof c.label === "string" || typeof c.value === "string")
-          ) {
-            out.push(String(c.label ?? c.value));
-          }
+        // Déduit un type "fonctionnel" pour le rendu (Choice, Number, ...)
+        function getFieldType(meta) {
+            if (!meta) return "Unknown";
+            const raw = String(meta.type || "").toLowerCase();
+            const wo = parseWidgetOptions(meta);
+            const w = (wo?.widget || "").toLowerCase();
+            if (w === "choice") return "Choice";
+            if (w === "choicelist") return "ChoiceList";
+            if (raw.startsWith("reflist")) return "RefList";
+            if (raw.startsWith("ref")) return "Ref";
+            if (raw.includes("choice"))
+                return raw.includes("list") ? "ChoiceList" : "Choice";
+            if (raw.includes("date") && raw.includes("time")) return "DateTime";
+            if (raw.includes("date")) return "Date";
+            if (raw.includes("bool")) return "Bool";
+            if (raw.includes("attach")) return "Attachments";
+            if (raw.includes("num") || raw.includes("int") || raw.includes("float"))
+                return "Number";
+            if (raw.includes("text") || raw === "") return "Text";
+            return meta.type || "Text";
         }
-        return out;
-      };
-      if (hasChoicesById) {
-        const exists = Object.values(wo.choicesById).some(
-          (c) => (c?.label ?? c?.value) === newLabel
-        );
-        if (!exists) {
-          const key = "opt_" + Math.random().toString(36).slice(2, 9);
-          wo.choicesById[key] = { label: newLabel, value: newLabel };
-        }
-        if (hasChoicesArray) delete wo.choices;
-      } else if (hasChoicesArray) {
-        const normalized = toStringArray(wo.choices);
-        if (!normalized.includes(newLabel)) normalized.push(newLabel);
-        wo.choices = normalized;
-      } else {
-        wo.choices = [newLabel];
-        delete wo.choicesById;
-      }
-      await grist.docApi.applyUserActions([
-        [
-          "UpdateRecord",
-          "_grist_Tables_column",
-          meta.id,
-          { widgetOptions: JSON.stringify(wo) },
-        ],
-      ]);
-      meta.widgetOptions = JSON.stringify(wo);
-      const selectedSource = select.value;
-      const selectedColumn = catchColumn(choices, selectedSource);
-      if (selectedColumn) {
-        renderVisibilityUI(selectedColumn);
-        renderBoard(selectedColumn, lastRecords, selectedSource);
-      }
-    }
 
-    // Panneau de sélection des champs visibles dans les cards
-    function renderFieldsUI(colMeta) {
-      const tableCols = allColsMeta;
-      const sourceColId = colMeta.colId || colMeta.id;
-      const tableId = currentTableId;
-      if (!tableId) return;
-      const fieldMetas = tableCols.filter((c) => {
-        const cid = c.colId || c.id || "";
-        if (!cid) return false;
-        if (cid === "id") return false;
-        if (cid === "manualSort") return false;
-        if (cid.includes("gristHelper_Display")) return false;
-        if (cid === sourceColId) return false;
-        return true;
-      });
-      const allCids = fieldMetas.map((f) => f.colId || f.id);
-      const defaultVisible = allCids.slice(0, 3);
-      const mode = getHiddenFieldsMode(tableId, sourceColId);
-      const hiddenNow = new Set(
-        getHiddenFields(tableId, sourceColId).map(norm)
-      );
-      const buildVisibleSetFromMode = () => {
-        if (mode === "all") {
-          return new Set(allCids);
-        } else if (mode === "default") {
-          return new Set(defaultVisible);
-        } else {
-          return new Set(allCids.filter((c) => !hiddenNow.has(norm(c))));
+        // =====================================================================
+        // 4) COULEURS & CHOIX (utils couleurs pour Choice/ChoiceList)
+        // =====================================================================
+        function normalizeHex(c) {
+            if (!c || typeof c !== "string") return null;
+            let v = c.trim();
+            if (!v.startsWith("#") && /^[0-9a-fA-F]{6,8}$/.test(v)) v = "#" + v;
+            return v;
         }
-      };
-      fieldsPanel.innerHTML =
-        "<div class='font-medium mb-2 text-xs'>Champs :</div>";
-      const topRow = document.createElement("label");
-      topRow.className = "flex items-center gap-2 mb-2 text-xs";
-      const masterCb = document.createElement("input");
-      masterCb.type = "checkbox";
-      masterCb.checked = mode === "all";
-      masterCb.addEventListener("click", (e) => e.stopPropagation());
-      masterCb.addEventListener("change", async (e) => {
-        e.stopPropagation();
-        if (masterCb.checked) {
-          await setHiddenFields(tableId, sourceColId, []);
-          await setHiddenFieldsMode(tableId, sourceColId, "all");
-        } else {
-          await setHiddenFields(tableId, sourceColId, []);
-          await setHiddenFieldsMode(tableId, sourceColId, "default");
+        function pickBg(opt) {
+            const c =
+                opt?.fillColor ??
+                opt?.fillcolor ??
+                opt?.color ??
+                opt?.bgColor ??
+                null;
+            return normalizeHex(c);
         }
-        const selectedColumn = catchColumn(choices, sourceColId);
-        if (selectedColumn) {
-          renderBoard(selectedColumn, lastRecords, sourceColId);
-          renderFieldsUI(selectedColumn);
+        function pickFg(opt) {
+            const c = opt?.textColor ?? opt?.textcolor ?? null;
+            return normalizeHex(c);
         }
-      });
-      const masterSpan = document.createElement("span");
-      masterSpan.textContent = "Afficher tous";
-      topRow.appendChild(masterCb);
-      topRow.appendChild(masterSpan);
-      fieldsPanel.appendChild(topRow);
-      const list = document.createElement("div");
-      list.className = "grid grid-cols-2 gap-1 text-xs";
-      fieldsPanel.appendChild(list);
-      const visibleSetNow = buildVisibleSetFromMode();
-      for (const fm of fieldMetas) {
-        const cid = fm.colId || fm.id;
-        if (!cid || cid === "manualSort") continue;
-        const row = document.createElement("label");
-        row.className = "flex items-center gap-2 text-xs";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = visibleSetNow.has(cid);
-        cb.addEventListener("click", (e) => e.stopPropagation());
-        cb.addEventListener("change", async (e) => {
-          e.stopPropagation();
-          const curMode = getHiddenFieldsMode(tableId, sourceColId);
-          const curHidden = new Set(
-            getHiddenFields(tableId, sourceColId).map(norm)
-          );
-          let curVisible;
-          if (curMode === "all") {
-            curVisible = new Set(allCids);
-          } else if (curMode === "default") {
-            curVisible = new Set(defaultVisible);
-          } else {
-            curVisible = new Set(
-              allCids.filter((c) => !curHidden.has(norm(c)))
+        function safeParseWidget(meta) {
+            const raw = meta?.widgetOptions;
+            if (!raw) return null;
+            if (typeof raw === "object") return raw;
+            try {
+                return JSON.parse(raw);
+            } catch {
+                return null;
+            }
+        }
+        function buildChoiceColorMap(meta) {
+            const wo = safeParse(meta?.widgetOptions) || {};
+            const map = new Map();
+            const push = (label, opt) => {
+                const L = (label ?? "").toString().trim();
+                if (!L) return;
+                const entry = { bg: pickBg(opt), fg: pickFg(opt) };
+                map.set(L, entry);
+                map.set(norm(L), entry);
+            };
+            if (Array.isArray(wo.choices)) {
+                for (const c of wo.choices) push(c?.label ?? c?.value, c);
+            } else if (wo.choicesById && typeof wo.choicesById === "object") {
+                for (const id of Object.keys(wo.choicesById)) {
+                    const c = wo.choicesById[id];
+                    push(c?.label ?? c?.value, c);
+                }
+            }
+            return map;
+        }
+        const FALLBACK_COLORS = [
+            "#10B981",
+            "#3B82F6",
+            "#F59E0B",
+            "#EF4444",
+            "#8B5CF6",
+            "#EC4899",
+            "#14B8A6",
+            "#F97316",
+        ];
+        function hashStringToIndex(str, mod) {
+            let h = 0;
+            for (let i = 0; i < str.length; i++) {
+                h = (h * 31 + str.charCodeAt(i)) | 0;
+            }
+            return Math.abs(h) % mod;
+        }
+        function mapFromChoiceOptions(wo) {
+            const m = new Map();
+            const co =
+                wo?.choiceOptions || wo?.choicesOptions || wo?.choice_options;
+            if (co && typeof co === "object") {
+                for (const [key, opt] of Object.entries(co)) {
+                    const label = (opt?.label ?? key ?? "").toString().trim();
+                    const entry = { bg: pickBg(opt), fg: pickFg(opt) };
+                    if (!label) continue;
+                    m.set(label, entry);
+                    m.set(norm(label), entry);
+                    m.set(norm(key), entry);
+                }
+            }
+            return m;
+        }
+        function mapFromChoicesArrays(wo) {
+            const m = new Map();
+            const push = (c) => {
+                const label = (c?.label ?? c?.value ?? "").toString().trim();
+                if (!label) return;
+                const entry = { bg: pickBg(c), fg: pickFg(c) };
+                m.set(label, entry);
+                m.set(norm(label), entry);
+            };
+            if (Array.isArray(wo?.choices)) {
+                for (const c of wo.choices) push(c);
+            } else if (wo?.choicesById && typeof wo.choicesById === "object") {
+                for (const id of Object.keys(wo.choicesById))
+                    push(wo.choicesById[id]);
+            }
+            return m;
+        }
+        const choiceColorCaches = new Map();
+        function getColorCache(meta) {
+            const colKey = (meta?.colId || meta?.id || "??").toString();
+            if (!choiceColorCaches.has(colKey)) {
+                const wo = safeParseWidget(meta) || {};
+                const cache = new Map();
+                for (const [k, v] of mapFromChoicesArrays(wo)) cache.set(k, v);
+                for (const [k, v] of mapFromChoiceOptions(wo)) cache.set(k, v);
+                choiceColorCaches.set(colKey, cache);
+            }
+            return choiceColorCaches.get(colKey);
+        }
+        function colorForLabel(meta, label) {
+            const L = String(label ?? "");
+            const cache = getColorCache(meta);
+            const hit = cache.get(L) || cache.get(norm(L));
+            if (hit && (hit.bg || hit.fg)) return hit;
+            const idx = hashStringToIndex(L, FALLBACK_COLORS.length);
+            return { bg: FALLBACK_COLORS[idx], fg: "#111827" };
+        }
+
+        // =====================================================================
+        // 5) DÉTECTION STYLE D'AFFICHAGE (nombres, dates, etc.)
+        // =====================================================================
+        function getDisplayStyle(meta) {
+            const wo = parseWidgetOptions(meta) || {};
+            const rawType = String(meta?.type || "").toLowerCase();
+            const widget = (wo.widget || "").toLowerCase();
+            const numMode = (wo.numMode || "").toLowerCase();
+            const numFormat = wo.numFormat || wo.format || "";
+            const decimals = wo.decimals ?? wo.precision ?? wo.fracDigits ?? null;
+            const currency = wo.currency || wo.currencyCode || wo.symbol || null;
+            const unit = wo.unit || wo.suffix || null;
+            const dateFormat = wo.dateFormat || null;
+            const timeFormat = wo.timeFormat || null;
+            const align = wo.align || wo.alignment || null;
+            const isNumberLike =
+                rawType.includes("num") ||
+                rawType.includes("number") ||
+                rawType.includes("int") ||
+                rawType.includes("float") ||
+                rawType === "numeric";
+            const looksPercent =
+                numMode === "percent" ||
+                widget === "percent" ||
+                /%/.test(String(numFormat)) ||
+                unit === "%" ||
+                (isNumberLike && wo.percent === true);
+            const looksCurrency =
+                numMode === "currency" ||
+                widget === "currency" ||
+                currency != null ||
+                /[$€£¥]/.test(String(numFormat));
+            const isDateTime = rawType.includes("datetime");
+            const isDate = rawType.includes("date") && !isDateTime;
+            const isTime = rawType.includes("time") && !isDateTime;
+            if (isNumberLike) {
+                if (looksPercent)
+                    return {
+                        kind: "percent",
+                        decimals: decimals ?? 0,
+                        format: numFormat || null,
+                        unit: unit || "%",
+                        align: align || "right",
+                    };
+                if (looksCurrency)
+                    return {
+                        kind: "currency",
+                        currency: currency || guessCurrencyFromFormat(numFormat) || "EUR",
+                        decimals: decimals ?? 2,
+                        format: numFormat || null,
+                        align: align || "right",
+                    };
+                return {
+                    kind: "number",
+                    decimals: decimals ?? guessDecimalsFromFormat(numFormat),
+                    format: numFormat || null,
+                    align: align || "right",
+                    unit: unit || null,
+                };
+            }
+            if (isDateTime)
+                return {
+                    kind: "datetime",
+                    dateFormat: dateFormat || guessDateFormat(dateFormat),
+                    timeFormat: timeFormat || guessTimeFormat(timeFormat),
+                    align: align || "left",
+                };
+            if (isDate)
+                return {
+                    kind: "date",
+                    dateFormat: dateFormat || guessDateFormat(dateFormat),
+                    align: align || "left",
+                };
+            if (isTime)
+                return {
+                    kind: "time",
+                    timeFormat: timeFormat || guessTimeFormat(numFormat),
+                    align: align || "left",
+                };
+            return {
+                kind: "default",
+                align: align || (rawType.includes("text") ? "left" : "left"),
+            };
+        }
+        // Inférences simples de formatage
+        function guessCurrencyFromFormat(fmt) {
+            if (!fmt) return null;
+            if (fmt.includes("€")) return "EUR";
+            if (fmt.includes("$")) return "USD";
+            if (fmt.includes("£")) return "GBP";
+            if (fmt.includes("¥")) return "JPY";
+            return null;
+        }
+        function guessDecimalsFromFormat(fmt) {
+            if (!fmt) return null;
+            const m = fmt.match(/\.0+/);
+            return m ? m[0].length - 1 : null;
+        }
+        function guessDateFormat(fmt) {
+            if (!fmt) return null;
+            if (/YYYY.*MM.*DD/i.test(fmt)) return "YYYY-MM-DD";
+            if (/DD.*MM.*YYYY/i.test(fmt)) return "DD/MM/YYYY";
+            if (/MM.*DD.*YYYY/i.test(fmt)) return "MM/DD/YYYY";
+            return null;
+        }
+        function guessTimeFormat(fmt) {
+            if (!fmt) return null;
+            if (/HH.*mm.*ss/i.test(fmt)) return "HH:mm:ss";
+            if (/HH.*mm/i.test(fmt)) return "HH:mm";
+            if (/hh.*mm.*a/i.test(fmt)) return "hh:mm a";
+            return null;
+        }
+
+        // Contexte d'internationalisation issu de l'URL / navigateur
+        const DOC_ENV = (() => {
+            const p = new URLSearchParams(location.search);
+            const tz =
+                Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Paris";
+            return {
+                culture: p.get("culture") || navigator.language || "fr-FR",
+                currency: p.get("currency") || "EUR",
+                timeZone: p.get("timeZone")
+                    ? decodeURIComponent(p.get("timeZone"))
+                    : tz,
+                language: p.get("language") || navigator.language || "fr-FR",
+            };
+        })();
+        function intlOptionsFromGristPatterns(
+            datePattern = "",
+            timePattern = "",
+            { timeZone } = {}
+        ) {
+            const o = { timeZone };
+            if (datePattern) {
+                if (datePattern.includes("YYYY")) o.year = "numeric";
+                else if (datePattern.includes("YY")) o.year = "2-digit";
+                if (datePattern.includes("MMMM")) o.month = "long";
+                else if (datePattern.includes("MMM")) o.month = "short";
+                else if (datePattern.includes("MM")) o.month = "2-digit";
+                else if (datePattern.includes("M")) o.month = "numeric";
+                if (datePattern.includes("DD")) o.day = "2-digit";
+                else if (datePattern.includes("Do") || datePattern.includes("D"))
+                    o.day = "numeric";
+            }
+            if (timePattern) {
+                const hasSeconds = timePattern.includes("ss");
+                const hasMinutes =
+                    timePattern.includes("mm") || timePattern.includes("m");
+                const is12h = timePattern.includes("h");
+                const is24h = timePattern.includes("HH");
+                if (is12h) {
+                    o.hour = timePattern.includes("hh") ? "2-digit" : "numeric";
+                    o.hour12 = true;
+                } else if (is24h) {
+                    o.hour = "2-digit";
+                    o.hour12 = false;
+                    o.hourCycle = "h23";
+                }
+                if (hasMinutes)
+                    o.minute = timePattern.includes("mm") ? "2-digit" : "numeric";
+                if (hasSeconds) o.second = "2-digit";
+                if (timePattern.includes(" z")) o.timeZoneName = "short";
+            }
+            return o;
+        }
+
+        // =====================================================================
+        // 6) PERSISTENCE D'OPTIONS (lecture/écriture)
+        // =====================================================================
+        function getStoredSource(source) {
+            const v = widgetOptions?.[sourceKey()] || "";
+            return v;
+        }
+        function getHiddenFor(colId) {
+            const v = widgetOptions?.[hiddenKey(colId)];
+            return Array.isArray(v) ? v : [];
+        }
+        function getHiddenFields(tableId, sourceColId) {
+            const v = widgetOptions?.[hiddenFieldsKey(tableId, sourceColId)];
+            return Array.isArray(v) ? v : [];
+        }
+        async function setHiddenFields(tableId, sourceColId, arr) {
+            widgetOptions[hiddenFieldsKey(tableId, sourceColId)] = arr;
+            await grist.widgetApi.setOption(
+                hiddenFieldsKey(tableId, sourceColId),
+                arr
             );
-          }
-          if (cb.checked) {
-            curVisible.add(cid);
-          } else {
-            curVisible.delete(cid);
-          }
-          const newHidden = allCids.filter((c) => !curVisible.has(c));
-          await setHiddenFields(tableId, sourceColId, newHidden);
-          await setHiddenFieldsMode(tableId, sourceColId, "custom");
-          const selectedColumn = catchColumn(choices, sourceColId);
-          if (selectedColumn) {
-            renderBoard(selectedColumn, lastRecords, sourceColId);
-            renderFieldsUI(selectedColumn);
-          }
-        });
-        const span = document.createElement("span");
-        span.textContent = fm.label || cid;
-        row.appendChild(cb);
-        row.appendChild(span);
-        list.appendChild(row);
-      }
-    }
-    const fieldsClass = fieldsPanel.classList;
-    fieldsBtn.addEventListener("click", () => {
-      const isHidden = fieldsClass.toggle("hidden");
-      fieldsBtn.textContent = `${isHidden ? "Afficher les champs" : "Masquer les champs"
-        }`;
-    });
-
-    function renderDateFilterUI() {
-      const dateCols = getDateColumns(allColsMeta); // toutes les colonnes date/datetime
-      const current = getDateFilterField();
-      const hidePast = getHidePastFlag();
-
-      // Reset du panneau
-      datePanel.innerHTML = "";
-
-      // Titre
-      const title = document.createElement("div");
-      title.className = "font-medium mb-2 text-xs";
-      title.textContent = "Filtre par date";
-      datePanel.appendChild(title);
-
-      // Conteneur
-      const container = document.createElement("div");
-      container.className = "flex flex-col gap-3";
-      datePanel.appendChild(container);
-
-      // --- Ligne Select (champ date)
-      const rowSelect = document.createElement("label");
-      rowSelect.className = "flex items-center gap-2";
-      container.appendChild(rowSelect);
-
-      const lblSelect = document.createElement("span");
-      lblSelect.className = "text-xs w-40";
-      lblSelect.textContent = "Champ date :";
-      rowSelect.appendChild(lblSelect);
-
-      const selectEl = document.createElement("select");
-      selectEl.id = "dateFilterSelect";
-      selectEl.className = "rounded-lg p-2 text-xs shadow-md";
-      rowSelect.appendChild(selectEl);
-
-      // Option "aucun"
-      const optNone = document.createElement("option");
-      optNone.value = "";
-      optNone.textContent = "— Aucun —";
-      selectEl.appendChild(optNone);
-
-      // Options dynamiques
-      for (const c of dateCols) {
-        const opt = document.createElement("option");
-        opt.value = String(c.colId);
-        opt.textContent = c.label || c.colId;
-        if (c.colId === current) opt.selected = true;
-        selectEl.appendChild(opt);
-      }
-
-      // --- Ligne Checkbox (masquer passé)
-      const rowCheckbox = document.createElement("label");
-      rowCheckbox.className = "flex items-center gap-2";
-      container.appendChild(rowCheckbox);
-
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.id = "hidePastCheckbox";
-      cb.checked = !!hidePast;
-      rowCheckbox.appendChild(cb);
-
-      const cbText = document.createElement("span");
-      cbText.className = "text-xs";
-      cbText.textContent = "Masquer les cartes dont la date est passée";
-      rowCheckbox.appendChild(cbText);
-
-      // Aide
-      const help = document.createElement("p");
-      help.className = "text-xs text-slate-500";
-      help.textContent =
-        "Si aucun champ n'est choisi, aucune carte n'est filtrée.";
-      container.appendChild(help);
-
-      // Listeners
-      selectEl.addEventListener("change", async () => {
-        await setDateFilterField(selectEl.value);
-        const selectedSource = select.value;
-        const selectedColumn = catchColumn(choices, selectedSource);
-        if (!selectedColumn) return;
-        renderBoard(
-          selectedColumn,
-          applyDateFilter(lastRecords),
-          selectedSource
-        );
-      });
-
-      cb.addEventListener("change", async () => {
-        await setHidePastFlag(cb.checked);
-        const selectedSource = select.value;
-        const selectedColumn = catchColumn(choices, selectedSource);
-        if (!selectedColumn) return;
-        renderBoard(
-          selectedColumn,
-          applyDateFilter(lastRecords),
-          selectedSource
-        );
-      });
-    }
-
-    laneSelect.addEventListener("change", () => {
-      const selectedSource = select.value;
-      const selectedColumn = catchColumn(choices, selectedSource);
-      if (!selectedColumn) return;
-      renderBoard(selectedColumn, lastRecords, selectedSource);
-    });
-
-    // bouton d’affichage/masquage du panneau
-    const dateClass = datePanel.classList;
-    dateBtn?.addEventListener("click", () => {
-      const isHidden = dateClass.toggle("hidden");
-      dateBtn.textContent = isHidden ? "Filtre date" : "Masquer filtre date";
-    });
-
-    // Retourne le tableau filtré selon le champ et le toggle "masquer le passé".
-    function applyDateFilter(records) {
-      const fld = getDateFilterField();
-      const hidePast = getHidePastFlag();
-      if (!hidePast || !fld) return records || [];
-
-      const now = new Date();
-      return (records || []).filter((rec) => {
-        const raw = rec[fld];
-        const d = toDate(raw);
-        // si pas de date ou date invalide -> on conserve
-        if (!d) return true;
-        // on masque seulement si la date est strictement antérieure à aujourd'hui
-        return !isPastDate(d, now);
-      });
-    }
-
-    // =====================================================================
-    // 11) CONSTRUCTION DU KANBAN & DRAG/DROP
-    // =====================================================================
-    function updateHeaderCounts() {
-      const { headers, groups, sourceColId } = currentCtx;
-      if (!headers || !headers.length || !sourceColId) return;
-
-      // on prend uniquement les records des lanes OUVERTES
-      const activeLabels = Array.from(openLanes);
-      const activeRecords = activeLabels.flatMap((l) => groups.get(l) || []);
-
-      // prépare un compteur par colonne
-      const counts = new Map(headers.map((h) => [h.value, 0]));
-
-      // même logique de matching que dans createKanban
-      const eq = (a, b) => strNoAccent(a) === strNoAccent(b);
-
-      for (const rec of activeRecords) {
-        const val = rec[sourceColId];
-        for (const h of headers) {
-          const hv = h.value;
-          let match = false;
-          if (hv === empty) {
-            match = isEmptyValue(val);
-          } else if (Array.isArray(val)) {
-            match = val.some((v) => eq(v, hv));
-          } else {
-            match = eq(val, hv);
-          }
-          if (match) {
-            counts.set(hv, (counts.get(hv) || 0) + 1);
-            break;
-          }
         }
-      }
-
-      // pousse les valeurs dans la barre d’entêtes
-      const badges = wrapper.querySelectorAll("[data-count-for]");
-      badges.forEach((el) => {
-        const key = el.getAttribute("data-count-for");
-        el.textContent = String(counts.get(key) || 0);
-      });
-    }
-
-    function makeCardDraggable(cardEl, rowId, fromHeaderValue, sourceColId) {
-      cardEl.draggable = true;
-      cardEl.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("rowId", String(rowId));
-        e.dataTransfer.setData("fromHeader", fromHeaderValue);
-        e.dataTransfer.setData("sourceColId", sourceColId);
-        e.dataTransfer.effectAllowed = "move";
-
-        // Focus Drag
-        document.body.classList.add("is-dragging");
-        cardEl.classList.add("drag-active");
-      });
-
-      cardEl.addEventListener("dragend", () => {
-        // Reset visuel 
-        document.body.classList.remove("is-dragging");
-        cardEl.classList.remove("drag-active");
-      })
-    }
-    function createKanban(leadHeader, wrapper, records, source, opts = {}) {
-      const {
-        showHeaders = true,
-        showAdd = true,
-        onlyHeaders = false,
-      } = opts;
-
-      const sourceColId = source;
-      wrapper.innerHTML = "";
-      const tableId = currentTableId;
-      const mode = getHiddenFieldsMode(tableId, sourceColId);
-      const hiddenFields = getHiddenFields(tableId, sourceColId);
-      const hiddenFieldSet = new Set(hiddenFields.map(norm));
-
-      if (showAdd) {
-        const wrapperAddColumn = document.createElement("div");
-        wrapperAddColumn.classList.add(
-          "add-col",
-          "flex",
-          "items-center",
-          "bg-emerald-500",
-          "rounded-full",
-          "self-start",
-          "cursor-pointer",
-          "sticky",
-          "top-0"
-        );
-        const addColumn = document.createElement("div");
-        addColumn.classList.add(
-          "p-2",
-          "flex",
-          "items-center",
-          "justify-center",
-          "text-white",
-          "text-xl",
-          "font-bold",
-          "leading-none",
-          "w-12",
-          "h-12",
-          "text-center"
-        );
-        addColumn.textContent = "+";
-        wrapperAddColumn.appendChild(addColumn);
-        wrapper.appendChild(wrapperAddColumn);
-        addColumn.addEventListener("click", async () => {
-          const input = document.createElement("input");
-          input.type = "text";
-          input.placeholder = "Nouvelle colonne";
-          input.className =
-            "p-2 rounded border border-emerald-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
-          addColumn.replaceWith(input);
-          const submit = document.createElement("input");
-          submit.type = "submit";
-          submit.value = "OK";
-          submit.className =
-            "p-2 mt-2 w-auto rounded bg-emerald-500 text-white font-semibold hover:bg-emerald-600 cursor-pointer";
-          wrapperAddColumn.appendChild(submit);
-          wrapperAddColumn.classList.add("gap-2", "w-full", "bg-transparent");
-          submit.addEventListener("click", async () => {
-            const val = input.value;
-            if (val && val.trim()) {
-              await addChoiceToSourceColumn(source, val.trim());
-              input.replaceWith(addColumn);
-              submit.classList.add("hidden");
-            }
-          });
-        });
-      }
-
-      for (const item of leadHeader) {
-        const column = document.createElement("div");
-        column.classList.add(
-          "w-full",
-          "flex",
-          "flex-col",
-          "gap-4",
-          "items-center",
-          "bg-gray-50",
-          "dark:bg-gray-700",
-          "rounded",
-          "pb-6"
-        );
-        wrapper.appendChild(column);
-
-        let countRecord = null;
-        if (showHeaders) {
-          const head = document.createElement("h2");
-          const titleHead = document.createElement("span");
-          titleHead.textContent = item.value;
-          titleHead.classList.add("text-center", "text-xs", "font-semibold");
-          head.classList.add(
-            "column-head",
-            "w-full",
-            "min-w-0",
-            "flex",
-            "justify-around",
-            "items-center",
-            "bg-emerald-500",
-            "text-white",
-            "rounded-t",
-            "sticky",
-            "top-0",
-            "p-4"
-          );
-          countRecord = document.createElement("span");
-          countRecord.setAttribute("data-count-for", item.value); // clé = libellé de la colonne
-          countRecord.textContent = "0";
-          countRecord.className =
-            "inline-flex items-center justify-center px-2 py-0.5 text-xs font-semibold bg-emerald-400 rounded-full";
-          head.appendChild(titleHead);
-          head.appendChild(countRecord);
-          column.prepend(head);
+        function hiddenFieldsModeKey(tableId, sourceColId) {
+            return `kanban:hiddenFieldsMode:${tableId}:${sourceColId}`;
         }
-        const hiddenSet = new Set(getHiddenFor(source).map(norm));
-        const labelKey = norm(item.value);
-        if (hiddenSet.has(labelKey)) {
-          column.style.display = "none";
+        function getHiddenFieldsMode(tableId, sourceColId) {
+            const v = widgetOptions?.[hiddenFieldsModeKey(tableId, sourceColId)];
+            return v === "all" || v === "custom" ? v : "default";
         }
-
-        enableColumnDrop(column, item.value, source);
-        let count = 0;
-        if (!onlyHeaders) {
-          for (const record of records) {
-            const cellValue = record[source];
-            const headerValue = item.value;
-            let isMatch = false;
-            if (headerValue === empty) {
-              isMatch = isEmptyValue(cellValue);
-            } else if (Array.isArray(cellValue)) {
-              isMatch = cellValue.some(
-                (v) => strNoAccent(v) === strNoAccent(headerValue)
-              );
-            } else {
-              isMatch = strNoAccent(cellValue) === strNoAccent(headerValue);
-            }
-            if (!isMatch) continue;
-            count++;
-            const card = document.createElement("div");
-            card.classList.add(
-              "kanban-card",
-              "card",
-              "test-sm",
-              "w-5/6",
-              "min-w-0",
-              "rounded-lg",
-              "shadow-lg",
-              "p-3",
-              "h-auto",
-              "cursor-pointer",
-              "bg-white",
-              "hover:bg-emerald-50",
-              "dark:bg-gray-500",
-              "dark:hover:bg-emerald-800",
-              "overflow-hidden",
-              "focus:bg-emerald-50",           // Nouveau : background opaque en mode clair au focus
-              "focus:dark:bg-emerald-900",   // Nouveau : background opaque en mode sombre au focus
-              "focus:opacity-100"
+        async function setHiddenFieldsMode(tableId, sourceColId, mode) {
+            await grist.widgetApi.setOption(
+                hiddenFieldsModeKey(tableId, sourceColId),
+                mode
             );
-            card.tabIndex = 0;
-            let candidateCids = allColsMeta
-              .map((c) => c.colId || c.id)
-              .filter(
-                (cid) =>
-                  cid &&
-                  cid !== "id" &&
-                  cid !== source &&
-                  cid !== "manualSort" &&
-                  !cid.includes("gristHelper_Display")
-              );
-            // candidateCids = candidateCids.filter((cid) => cid in record);
-            let keys;
-            if (mode === "all") {
-              keys = candidateCids;
-            } else if (mode === "custom") {
-              keys = candidateCids.filter(
-                (cid) => !hiddenFieldSet.has(norm(cid))
-              );
-            } else {
-              const nonEmpty = [];
-              for (const k of candidateCids) {
-                const v = record[k];
-                if (!isEmptyValue(v)) nonEmpty.push(k);
-                if (nonEmpty.length === 3) break;
-              }
-              keys = nonEmpty.length ? nonEmpty : candidateCids.slice(0, 3);
+            widgetOptions[hiddenFieldsModeKey(tableId, sourceColId)] = mode;
+        }
+        async function setStoredSource(source) {
+            await grist.widgetApi.setOption(sourceKey(), source);
+        }
+        async function setHiddenFor(colId, arr) {
+            widgetOptions[hiddenKey(colId)] = arr;
+            await grist.widgetApi.setOption(hiddenKey(colId), arr);
+        }
+
+        function getDateFilterField() {
+            return widgetOptions?.[DATE_FILTER_FIELD_KEY] || "";
+        }
+        async function setDateFilterField(colId) {
+            await grist.widgetApi.setOption(DATE_FILTER_FIELD_KEY, colId || "");
+        }
+
+        function getHidePastFlag() {
+            return widgetOptions?.[DATE_FILTER_HIDE_PAST_KEY];
+        }
+        async function setHidePastFlag(flag) {
+            widgetOptions[DATE_FILTER_HIDE_PAST_KEY] = !!flag;
+            await grist.widgetApi.setOption(DATE_FILTER_HIDE_PAST_KEY, !!flag);
+        }
+
+        // =====================================================================
+        // 7) INDEX MÉTA & RÉCUPÉRATION DES COLONNES
+        // =====================================================================
+        let metaIndex = new Map();
+        function rebuildMetaIndex() {
+            metaIndex.clear();
+            for (const c of allColsMeta) {
+                const cid = c.colId || c.id;
+                if (cid) metaIndex.set(String(cid), c);
+                if (c.id != null) metaIndex.set(String(c.id), c);
+                if (c.label) metaIndex.set(String(c.label), c);
             }
-            for (const infos of keys) {
-              const meta = getColMetaByAnyKey(infos);
-              const fieldType = getFieldType(meta);
-              const style = getDisplayStyle(meta);
-              const row = document.createElement("div");
-              row.classList.add(
-                "flex",
-                "flex-col",
-                "gap-2",
-                "items-start",
-                "p-2"
-              );
-              const titleItem = document.createElement("p");
-              titleItem.innerHTML = `${infos}&nbsp;:`;
-              titleItem.classList.add(
-                "font-semibold",
-                "text-gray-800",
-                "dark:text-gray-300"
-              );
-              const raw = record[infos];
-              const contentEl = renderFieldValue(meta, fieldType, style, raw);
-              contentEl.classList.add(
-                "break-words",
-                "text-gray-900",
-                "dark:text-gray-50"
-              );
-              row.appendChild(titleItem);
-              row.appendChild(contentEl);
-              card.appendChild(row);
+        }
+        function getColMetaByAnyKey(key) {
+            return metaIndex.get(String(key)) || null;
+        }
+
+        // Renvoie les métadonnées de toutes les colonnes de la table active
+        async function getAllColumns() {
+            const table = await grist.getTable();
+            const tableId = await table._platform.getTableId();
+            const tables = await grist.docApi.fetchTable("_grist_Tables");
+            const columns = await grist.docApi.fetchTable("_grist_Tables_column");
+            const fields = Object.keys(columns);
+            const tableColumns = [];
+            if (!tableId) {
+                console.log("Aucun id de table trouvé");
+                return tableColumns;
             }
-            column.appendChild(card);
-            card.dataset.rowId = record.id;
-            card.addEventListener("click", () => {
-              if (record.id !== undefined) {
-                grist.setCursorPos({ rowId: record.id });
-              }
+            const tableRef = tables.id[tables.tableId.indexOf(tableId)];
+            for (const index in columns.parentId) {
+                if (columns.parentId[index] === tableRef) {
+                    tableColumns.push(
+                        Object.fromEntries(fields.map((f) => [f, columns[f][index]]))
+                    );
+                }
+            }
+            return tableColumns;
+        }
+        function debugDumpColumnFormats() {
+            console.group("GRIST Column Formats");
+            for (const c of allColsMeta) {
+                const colId = c.colId || c.id;
+                const t = getFieldType(c);
+                const style = getDisplayStyle(c);
+            }
+            console.groupEnd();
+        }
+
+        // Id de table courant, récupéré une fois
+        async function initCurrentTableId() {
+            if (currentTableId) return currentTableId;
+            const table = await grist.getTable();
+            currentTableId = await table._platform.getTableId();
+            return currentTableId;
+        }
+
+        // Grist -> options du widget
+        grist.onOptions((opts) => {
+            widgetOptions = opts || {};
+        });
+
+        // =====================================================================
+        // 8) HELPERS CHOICES (détection Choice/ChoiceList, extraction ordre)
+        // =====================================================================
+        function isChoiceLike(colMeta) {
+            const wo = safeParse(colMeta?.widgetOptions);
+            return (
+                wo?.widget === "Choice" ||
+                wo?.widget === "ChoiceList" ||
+                !!wo?.choices ||
+                !!wo?.choicesById
+            );
+        }
+        function getChoicesFromMeta(colMeta) {
+            const wo = safeParse(colMeta?.widgetOptions);
+            if (!wo) return [];
+            let result = [];
+            if (wo && Array.isArray(wo.choices)) {
+                for (const c of wo.choices) {
+                    let label;
+                    if (typeof c === "string") {
+                        label = c;
+                    } else if (c && (c.label != null || c.value != null)) {
+                        label = c.label != null ? c.label : c.value;
+                    } else {
+                        label = "";
+                    }
+                    if (label) result.push(label);
+                }
+                return result;
+            }
+            if (wo && typeof wo.choicesById === "object") {
+                for (const key of Object.keys(wo.choicesById)) {
+                    const c = wo.choicesById[key];
+                    const label = (c && (c.label ?? c.value)) || "";
+                    if (label) result.push(label);
+                }
+                return result;
+            }
+            return result;
+        }
+
+        // =====================================================================
+        // 8b) HELPERS DATES (détection Date/DateTime, extraction ordre)
+        // =====================================================================
+        // Vrai si la colonne est de type Date ou DateTime (type brut ou widget).
+        function isDateLike(colMeta) {
+            const t = String(colMeta?.type || "").toLowerCase();
+            const w = String(
+                safeParse(colMeta?.widgetOptions)?.widget || ""
+            ).toLowerCase();
+            return t.includes("date") || w === "date" || w === "datetime";
+        }
+
+        // Renvoie une liste de colonnes Date/DateTime {id, colId, label, type}
+        function getDateColumns(allColsMeta) {
+            return (allColsMeta || []).filter(isDateLike).map((c) => ({
+                id: c.id,
+                colId: c.colId || c.id,
+                label: c.label || c.colId || "",
+                type: c.type || "Date",
+            }));
+        }
+
+        // Parse robuste d'une valeur de date venant d'un record (string | number | Date | null)
+        function toDate(value) {
+            if (value == null) return null;
+            if (value instanceof Date) return new Date(value.getTime());
+            if (typeof value === "number") return new Date(value);
+            if (typeof value === "string") {
+                const d = new Date(value);
+                return isNaN(d.getTime()) ? null : d;
+            }
+            // objets Grist exotiques -> on tente un cast
+            const d = new Date(value);
+            return isNaN(d.getTime()) ? null : d;
+        }
+
+        // Vrai si d est strictement avant "aujourd'hui" (en ignorant l'heure)
+        function isPastDate(d, now = new Date()) {
+            if (!(d instanceof Date)) return false;
+            const todayStart = new Date(
+                now.getFullYear(),
+                now.getMonth(),
+                now.getDate()
+            );
+            return d < todayStart;
+        }
+
+        // =====================================================================
+        // 8c) HELPERS LANE
+        // =====================================================================
+        function labelForLane(meta, raw) {
+            if (!meta) return String(raw ?? "");
+            const ft = getFieldType(meta);
+
+            if (ft === "ChoiceList" && Array.isArray(raw)) {
+                return (raw.length ? raw : [empty]).map((v) => String(v));
+            }
+
+            if (ft === "Choice") {
+                const s = String(raw ?? "");
+                return s ? [s] : [empty];
+            }
+
+            if (ft === "Ref") {
+                const id = refIdFromAny(raw);
+                return [id != null ? `#${id}` : empty];
+            }
+
+            if (ft === "RefList" && Array.isArray(raw)) {
+                const ids = refListIdsFromAny(raw);
+                return ids.length ? ids.map((id) => `#${id}`) : [empty];
+            }
+
+            if (ft === "Date" || ft === "DateTime" || ft === "Time") {
+                const d = toDate(raw);
+                if (!d) return [empty];
+
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, "0");
+                const day = String(d.getDate()).padStart(2, "0");
+                return [`${y}-${m}-${day}`];
+            }
+
+            const s = raw == null || raw === "" ? empty : String(raw);
+            return [s];
+        }
+
+        // Regroupe les records par laneKey (le champ choisi)
+        function groupRecordsByLane(records, laneColId) {
+            if (!laneColId) return { order: [], groups: new Map() };
+
+            const meta = getColMetaByAnyKey(laneColId);
+            const map = new Map();
+            const order = [];
+
+            for (const r of records || []) {
+                const buckets = labelForLane(meta, r[laneColId]);
+                for (const label of buckets) {
+                    if (!map.has(label)) {
+                        map.set(label, []);
+                        order.push(label);
+                    }
+                    map.get(label).push(r);
+                }
+            }
+
+            if (order.length === 0) {
+                map.set(empty, records || []);
+                order.push(empty);
+            }
+            return { order, groups: map };
+        }
+
+        function syncHorizontalScroll(elements) {
+            let lock = false;
+            elements.forEach((el) => {
+                el.addEventListener("scroll", () => {
+                    if (lock) return;
+                    lock = true;
+                    const x = el.scrollLeft;
+                    elements.forEach((other) => {
+                        if (other !== el) other.scrollLeft = x;
+                    });
+                    lock = false;
+                });
             });
-            makeCardDraggable(card, record.id, item.value, source);
-          }
         }
-        if (showHeaders && countRecord)
-          countRecord.textContent = String(count);
-      }
-    }
-    function rerenderKanban(selectedColumn, records, colId) {
-      const allHeaders = renderHeader(selectedColumn, records);
-      const visibleHeaders = buildVisibleHeaders(selectedColumn, allHeaders);
-      createKanban(visibleHeaders, wrapper, records, colId);
-    }
-    function catchColumn(choices, selectedSource) {
-      for (const col of choices) {
-        if ((col.colId || col.id) === selectedSource) {
-          return col;
+        // =====================================================================
+        // 9) RENDU DES VALEURS (HTML) & COMPOSANTS D'UI
+        // =====================================================================
+        // Construit les en-têtes (y compris la colonne « (vide) »)
+        function renderHeader(source, records) {
+            const order = getChoicesFromMeta(source);
+            // wrapper.innerHTML = "";
+            const headers = order.map((value, index) => ({ index, value }));
+            headers.unshift({ index: 0, value: empty });
+            return headers;
         }
-      }
-      return null;
-    }
-    async function updateCardAfterDrop(
-      rowId,
-      sourceColId,
-      fromHeaderValue,
-      toHeaderValue,
-      currentCellValue
-    ) {
-      await initCurrentTableId();
-      const eq = (a, b) => strNoAccent(a) === strNoAccent(b);
-      let newValue;
-      if (toHeaderValue === empty) {
-        newValue = Array.isArray(currentCellValue) ? [] : null;
-      } else if (Array.isArray(currentCellValue)) {
-        const withoutOld = currentCellValue.filter(
-          (v) => !eq(v, fromHeaderValue)
-        );
-        if (!withoutOld.some((v) => eq(v, toHeaderValue))) {
-          withoutOld.push(toHeaderValue);
-        }
-        newValue = withoutOld;
-      } else {
-        newValue = toHeaderValue;
-      }
-      const action = [
-        "UpdateRecord",
-        currentTableId,
-        rowId,
-        { [sourceColId]: newValue },
-      ];
-      await grist.docApi.applyUserActions([action]);
-    }
-
-    function enableColumnDrop(columnEl, headerValue, sourceColId) {
-      columnEl.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        columnEl.classList.add("ring-2", "ring-emerald-500");
-      });
-      columnEl.addEventListener("dragleave", () => {
-        columnEl.classList.remove("ring-2", "ring-emerald-500");
-      });
-      columnEl.addEventListener("drop", async (e) => {
-        e.preventDefault();
-        columnEl.classList.remove("ring-2", "ring-emerald-500");
-        const rowId = Number(e.dataTransfer.getData("rowId"));
-        const fromHeader = e.dataTransfer.getData("fromHeader");
-        const sourceCol = e.dataTransfer.getData("sourceColId");
-        if (!rowId || !sourceCol) return;
-        if (sourceCol !== sourceColId) return;
-        const record = lastRecords.find((r) => r.id === rowId);
-        if (!record) return;
-        const currentCellValue = record[sourceColId];
-        await updateCardAfterDrop(
-          rowId,
-          sourceColId,
-          fromHeader,
-          headerValue,
-          currentCellValue
-        );
-      });
-    }
-
-    function renderBoard(selectedColumn, records, sourceColId) {
-      const laneColId = laneSelect.value || "";
-      const filtered = applyDateFilter(records);
-
-      // Pas de regroupement -> comportement actuel (1 seul kanban)
-      if (!laneColId) {
-        wrapper.className = "text-xs w-full items-stretch justify-between flex gap-2 flex-col sm:flex-row";
-        rerenderKanban(selectedColumn, filtered, sourceColId);
-        return;
-      }
-
-      // Avec regroupement
-      wrapper.innerHTML = ""; // on reconstruit la grille de lignes
-      wrapper.className = "w-full flex flex-col gap-6";
-      const { order, groups } = groupRecordsByLane(filtered, laneColId);
-
-      // Bandeau de titre des colonnes (optionnel mais utile en multi-ligne)
-      // On peut le rendre une seule fois au-dessus, en réutilisant ta logique de header :
-      const headers = buildVisibleHeaders(
-        selectedColumn,
-        renderHeader(selectedColumn, filtered)
-      );
-
-      const headerRow = document.createElement("div");
-      headerRow.className = "w-full flex items-start gap-2 sticky top-0 z-20";
-      const leftSpacer = document.createElement("div");
-      leftSpacer.className = "w-52 shrink-0";
-      const headerWrapper = document.createElement("div");
-      headerWrapper.className =
-        "w-full overflow-x-auto flex gap-2 header-row kanban-scroll";
-      headerRow.appendChild(leftSpacer);
-      headerRow.appendChild(headerWrapper);
-      wrapper.appendChild(headerRow);
-
-      // Kanban du header global (avec en-têtes et bouton +)
-      createKanban(headers, headerWrapper, filtered, sourceColId, {
-        showHeaders: true,
-        showAdd: true,
-        onlyHeaders: true,
-      });
-
-      currentCtx.headers = headers;
-      currentCtx.groups = groups;
-      currentCtx.sourceColId = sourceColId;
-      updateHeaderCounts();
-
-      // Pour chaque lane, on fait une rangée: libellé + compteur + kanban
-      for (const laneLabel of order) {
-        const laneId = `lane-${slug(laneLabel)}`;
-
-        // --- HEADER (bouton d'accordéon)
-        const h2 = document.createElement("h2");
-        h2.id = `${laneId}-heading`;
-        h2.className = "text-xs";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className =
-          "flex items-center justify-between w-full p-3 font-medium text-gray-600 " +
-          "border border-b-0 border-gray-200 rounded-t-xl focus:ring-4 focus:ring-gray-200 " +
-          "dark:focus:ring-gray-800 dark:border-gray-700 dark:text-gray-300 " +
-          "hover:bg-gray-100 dark:hover:bg-gray-800 gap-3";
-        btn.setAttribute("data-accordion-target", `#${laneId}-panel`);
-        btn.setAttribute("aria-expanded", "false");
-        btn.setAttribute("aria-controls", `${laneId}-panel`);
-
-        const titleWrap = document.createElement("span");
-        titleWrap.className = "flex items-center gap-2";
-        const title = document.createElement("span");
-        title.className = "font-semibold";
-        title.textContent = laneLabel;
-        const badge = document.createElement("span");
-        badge.className =
-          "text-xs inline-flex items-center justify-center px-2 py-0.5 font-semibold " +
-          "bg-emerald-100 text-emerald-700 rounded-full";
-        badge.textContent = String((groups.get(laneLabel) || []).length);
-        titleWrap.appendChild(title);
-        titleWrap.appendChild(badge);
-
-        const icon = document.createElement("svg");
-        icon.setAttribute("aria-hidden", "true");
-        icon.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-        icon.setAttribute("fill", "none");
-        icon.setAttribute("viewBox", "0 0 10 6");
-        icon.className = "w-3 h-3 rotate-180 shrink-0";
-        icon.setAttribute("data-accordion-icon", "");
-        icon.innerHTML = `<path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5 5 1 1 5"/>`;
-
-        btn.appendChild(titleWrap);
-        btn.appendChild(icon);
-        h2.appendChild(btn);
-
-        // --- PANEL (contenu repliable)
-        const panel = document.createElement("div");
-        panel.id = `${laneId}-panel`;
-        panel.className = "panel hidden";
-        panel.setAttribute("aria-labelledby", `${laneId}-heading`);
-        const isOpen = openLanes.has(laneLabel);
-        btn.setAttribute("aria-expanded", String(isOpen));
-        if (!isOpen) {
-          panel.classList.add("hidden");
-        } else {
-          panel.classList.remove("hidden");
+        // Filtre la liste d'en-têtes selon les colonnes masquées
+        function buildVisibleHeaders(colMeta, allHeaders) {
+            const colId = colMeta.colId || colMeta.id;
+            const hidden = new Set(getHiddenFor(colId).map(norm));
+            return allHeaders.filter((h) => !hidden.has(norm(h.value)));
         }
 
-        const panelInner = document.createElement("div");
-        panelInner.className =
-          "panelInner w-full flex border border-t-0 border-gray-200 dark:border-gray-700 dark:bg-gray-900";
-        panel.appendChild(panelInner);
+        // Petits helpers de rendu spécifiques
+        function isNil(v) {
+            return v === null || v === undefined;
+        }
+        function refIdFromAny(v) {
+            if (isNil(v)) return null;
+            if (typeof v === "number" || typeof v === "string") return v;
+            if (typeof v === "object") {
+                if ("id" in v) return v.id;
+                if ("rowId" in v) return v.rowId;
+                if ("_rowId" in v) return v._rowId;
+            }
+            return null;
+        }
+        function refListIdsFromAny(arr) {
+            if (!Array.isArray(arr)) return [];
+            return arr.map(refIdFromAny).filter((x) => !isNil(x));
+        }
+        function renderRef(raw) {
+            const id = refIdFromAny(raw);
+            const span = document.createElement("span");
+            span.className =
+                "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded bg-gray-200";
+            span.textContent = isNil(id) ? "" : `#${id}`;
+            return span;
+        }
+        function renderRefList(raw) {
+            const ids = refListIdsFromAny(raw);
+            const wrapper = document.createElement("div");
+            if (ids.length > 0) {
+                for (const id of ids) {
+                    const span = document.createElement("span");
+                    span.className =
+                        "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded bg-gray-200";
+                    span.textContent = `#${id}`;
+                    wrapper.appendChild(span);
+                }
+            }
+            return wrapper;
+        }
 
-        // Injection dans le wrapper global
-        wrapper.appendChild(h2);
-        wrapper.appendChild(panel);
-
-        const ghostLeftSpacer = document.createElement("div");
-        ghostLeftSpacer.className = "ghostLeftSpacer w-[17rem] shrink-0";
-        panelInner.appendChild(ghostLeftSpacer);
-
-        // --- Le vrai kanban de la lane (sans headers, sans “+”) ---
-        const laneKanban = document.createElement("div");
-        laneKanban.className = "laneKanban flex gap-2 text-xs w-full";
-        panelInner.appendChild(laneKanban);
-
-        createKanban(
-          headers,
-          laneKanban,
-          groups.get(laneLabel) || [],
-          sourceColId,
-          {
-            showHeaders: false,
-            showAdd: false,
-          }
-        );
-      }
-      const scrollers = Array.from(
-        wrapper.querySelectorAll(".kanban-scroll")
-      );
-      syncHorizontalScroll(scrollers);
-    }
-
-    // =====================================================================
-    // 12) ÉVÉNEMENTS UI & CYCLE DE VIE GRIST
-    // =====================================================================
-    // ACCORDION: délégation d'événements (une seule fois, au niveau du wrapper)
-    wrapper.addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-accordion-target]");
-      if (!btn) return;
-
-      const selector = btn.getAttribute("data-accordion-target");
-      const panel = document.querySelector(selector);
-      if (!panel) return;
-
-      const expanded = btn.getAttribute("aria-expanded") === "true";
-      btn.setAttribute("aria-expanded", String(!expanded));
-      panel.classList.toggle("hidden", expanded);
-
-      const icon = btn.querySelector("[data-accordion-icon]");
-      if (icon) icon.classList.toggle("rotate-180", !expanded);
-
-      const heading = btn.closest("h2");
-      const laneLabel =
-        btn.querySelector(".font-semibold")?.textContent || "";
-      if (!expanded) openLanes.add(laneLabel);
-      else openLanes.delete(laneLabel);
-
-      updateHeaderCounts();
-    });
-
-    select.addEventListener("change", async () => {
-      const selectedSource = select.value;
-      await setStoredSource(selectedSource);
-      const selectedColumn = catchColumn(choices, selectedSource);
-      if (!selectedColumn) return;
-      renderVisibilityUI(selectedColumn);
-      renderFieldsUI(selectedColumn);
-      renderBoard(selectedColumn, lastRecords, selectedSource);
-    });
-
-    // Initialisation: charge les colonnes Choice/ChoiceList et peuple le select
-    (async () => {
-      try {
-        const cols = await getAllColumns();
-        allColsMeta = cols;
-
-        for (const col of cols) {
-          if (isChoiceLike(col)) {
-            const option = document.createElement("option");
-            option.classList.add(
-              "text-xs",
-              "select-none",
-              "focus:bg-emerald-500",
-              "focus:text-white"
-            );
-            option.value = col.colId || col.id || "";
-            option.textContent = col.label || col.colId || "(?)";
-            select.appendChild(option);
-            choices.push(col);
-
-            const cid = col.colId || col.id || "";
+        function formatValueForDisplay(value, style) {
+            if (value == null || value === "") return "";
+            if (style?.kind === "percent") {
+                const decimals = style.decimals ?? 0;
+                const n =
+                    Math.abs(Number(value)) <= 1 ? Number(value) * 100 : Number(value);
+                return `${n.toLocaleString(DOC_ENV.culture, {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals,
+                })} %`;
+            }
+            if (style?.kind === "currency") {
+                const decimals = style.decimals ?? 2;
+                const ccy = style.currency || DOC_ENV.currency || "EUR";
+                return Number(value).toLocaleString(DOC_ENV.culture, {
+                    style: "currency",
+                    currency: ccy,
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals,
+                });
+            }
+            if (style?.kind === "number") {
+                const decimals = style.decimals ?? 0;
+                return Number(value).toLocaleString(DOC_ENV.culture, {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals,
+                });
+            }
+            return String(value);
+        }
+        function renderDate(value) {
+            if (!value) return "";
+            return d.toLocaleDateString(DOC_ENV.culture, {
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+            });
+        }
+        function renderBool(value) {
+            const wrap = document.createElement("span");
+            wrap.className = "inline-flex items-center gap-1";
+            const icon = document.createElement("span");
+            icon.className =
+                "inline-flex items-center justify-center w-4 h-4 rounded border";
+            if (value === true) {
+                icon.classList.add(
+                    "bg-emerald-500",
+                    "border-emerald-500",
+                    "text-white"
+                );
+                icon.textContent = "✓";
+            } else if (value === false) {
+                icon.classList.add(
+                    "bg-transparent",
+                    "border-gray-300",
+                    "text-gray-400"
+                );
+                icon.textContent = "✕";
+            } else {
+                icon.classList.add(
+                    "bg-transparent",
+                    "border-gray-300",
+                    "text-gray-300"
+                );
+                icon.textContent = "–";
+            }
+            wrap.appendChild(icon);
+            return wrap;
+        }
+        function renderChoice(meta, raw) {
+            const label = String(raw ?? "").trim();
+            const span = document.createElement("span");
+            span.className = "inline-flex items-center gap-1";
+            const dot = document.createElement("span");
+            dot.className = "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded";
+            const { bg, fg } = colorForLabel(meta, label);
+            if (bg) dot.style.backgroundColor = bg;
+            if (fg) span.style.color = fg;
+            span.appendChild(dot);
+            dot.appendChild(document.createTextNode(label));
+            return span;
+        }
+        function renderChoiceList(meta, arr) {
+            const frag = document.createElement("div");
+            frag.className = "flex flex-wrap";
+            (arr || []).forEach((val) => {
+                const { bg, fg } = colorForLabel(meta, String(val).trim());
+                const chip = document.createElement("span");
+                chip.className = "inline-block text-xs px-2 py-0.5 mr-1 mb-1 rounded";
+                if (bg) chip.style.backgroundColor = bg;
+                if (fg) chip.style.color = fg;
+                chip.textContent = val;
+                frag.appendChild(chip);
+            });
+            return frag;
+        }
+        // Rendu générique d'un champ selon son type (retourne un élément DOM)
+        function renderFieldValue(meta, fieldType, style, raw) {
+            if (fieldType === "Bool") return renderBool(raw);
+            if (fieldType === "ChoiceList" && Array.isArray(raw))
+                return renderChoiceList(meta, raw);
+            if (fieldType === "Choice" && typeof raw === "string")
+                return renderChoice(meta, raw);
+            if (fieldType === "Ref") return renderRef(raw);
+            if (fieldType === "RefList") return renderRefList(raw);
             if (
-              !cid ||
-              cid === "id" ||
-              cid === "manualSort" ||
-              cid.includes("gristHelper_Display")
-            )
-              continue;
-            const opt = document.createElement("option");
-            opt.value = cid;
-            opt.textContent = col.label || cid;
-            laneSelect.appendChild(opt);
-          }
+                style?.kind === "number" ||
+                style?.kind === "currency" ||
+                style?.kind === "percent"
+            ) {
+                const p = document.createElement("p");
+                p.textContent = formatValueForDisplay(raw, style);
+                if (style?.align === "right")
+                    p.classList.add("text-right", "self-stretch");
+                return p;
+            }
+            if (
+                style?.kind === "date" ||
+                style?.kind === "datetime" ||
+                style?.kind === "time"
+            ) {
+                const p = document.createElement("p");
+                const dateObj = new Date(raw);
+                const locale = DOC_ENV.culture || navigator.language || "fr-FR";
+                const tz =
+                    DOC_ENV.timeZone ||
+                    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+                    "Europe/Paris";
+                const datePattern = style?.dateFormat || "";
+                const timePattern = style?.timeFormat || "";
+                const options = intlOptionsFromGristPatterns(
+                    datePattern,
+                    timePattern,
+                    { timeZone: tz }
+                );
+                p.textContent = new Intl.DateTimeFormat(locale, options).format(
+                    dateObj
+                );
+                if (style?.align === "right")
+                    p.classList.add("text-right", "self-stretch");
+                return p;
+            }
+            const p = document.createElement("p");
+            if (raw !== null && raw !== undefined) {
+                p.textContent =
+                    typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+            } else {
+                p.textContent = "—";
+            }
+            p.classList.add("text-gray-800", "w-full");
+            return p;
         }
-      } catch (e) {
-        console.error(e);
-      }
-    })();
 
-    // Réception des records et rendu du Kanban
-    grist.onRecords(async (records) => {
-      lastRecords = records || [];
-      await initCurrentTableId();
-      await initChoicesOnce();
-      allColsMeta = await getAllColumns();
-      rebuildMetaIndex();
-      if (select.value === "none") {
-        const stored = getStoredSource();
-        if (stored) {
-          const has = Array.from(select.options).some(
-            (o) => o.value === stored
-          );
-          if (has) select.value = stored;
+        // =====================================================================
+        // 10) PANNEAUX D'OPTIONS (headers/champs visibles)
+        // =====================================================================
+        function renderVisibilityUI(colMeta) {
+            const colId = colMeta.colId || colMeta.id;
+            const all = [empty, ...getChoicesFromMeta(colMeta)];
+            const hidden = new Set(getHiddenFor(colId).map(norm));
+            visPanel.innerHTML =
+                "<div class='font-medium mb-2 text-xs font-bold'>Colonnes :</div>";
+            const list = document.createElement("div");
+            list.className = "grid grid-cols-2 gap-1 text-xs";
+            visPanel.appendChild(list);
+            for (const label of all) {
+                const row = document.createElement("label");
+                row.className = "flex items-center gap-2  text-xs";
+                const cb = document.createElement("input");
+                cb.type = "checkbox";
+                cb.checked = !hidden.has(norm(label));
+                cb.addEventListener("change", async () => {
+                    const cur = new Set(getHiddenFor(colId).map(norm));
+                    const key = norm(label);
+                    if (cb.checked) cur.delete(key);
+                    else cur.add(key);
+                    await setHiddenFor(colId, Array.from(cur));
+                    renderBoard(colMeta, lastRecords, colId);
+                    renderVisibilityUI(colMeta);
+                });
+                const span = document.createElement("span");
+                span.textContent = label;
+                row.appendChild(cb);
+                row.appendChild(span);
+                list.appendChild(row);
+            }
         }
-      }
-      const selectedSource = select.value;
-      const selectedColumn = catchColumn(choices, selectedSource);
-      if (!selectedColumn) return;
-      renderVisibilityUI(selectedColumn);
-      renderFieldsUI(selectedColumn);
-      renderDateFilterUI();
-      renderBoard(selectedColumn, lastRecords, selectedSource);
-    });
+        const visClass = visPanel.classList;
+        visBtn.addEventListener("click", () => {
+            const isHidden = visClass.toggle("hidden");
+            visBtn.textContent = `${isHidden ? "Afficher les colonnes" : "Masquer les colonnes"
+                }`;
+        });
 
-    // Petit init one-shot des choix (remplissage du select + mémorisation)
-    async function initChoicesOnce() {
-      if (choicesInitialized) return;
-      const cols = await getAllColumns();
-      allColsMeta = cols;
-      rebuildMetaIndex();
-      while (select.options.length > 1) select.remove(1);
-      choices = [];
-      for (const col of cols) {
-        if (isChoiceLike(col)) {
-          const opt = document.createElement("option");
-          opt.value = col.colId || col.id || "";
-          opt.textContent = col.label || col.colId || "(?)";
-          select.appendChild(opt);
-          choices.push(col);
+        // Ajout programmatique d'une option de Choice/ChoiceList dans la colonne source
+        async function addChoiceToSourceColumn(sourceColId, newLabel) {
+            newLabel = String(newLabel || "").trim();
+            if (!newLabel) return;
+            const meta = allColsMeta.find((c) => (c.colId || c.id) === sourceColId);
+            if (!meta) throw new Error("Colonne source introuvable");
+            const curWO = safeParse(meta.widgetOptions) || {};
+            const wo = JSON.parse(JSON.stringify(curWO));
+            const hasChoicesArray = Array.isArray(wo.choices);
+            const hasChoicesById =
+                wo.choicesById && typeof wo.choicesById === "object";
+            const toStringArray = (arr) => {
+                const out = [];
+                for (const c of arr) {
+                    if (typeof c === "string") out.push(c);
+                    else if (
+                        c &&
+                        (typeof c.label === "string" || typeof c.value === "string")
+                    ) {
+                        out.push(String(c.label ?? c.value));
+                    }
+                }
+                return out;
+            };
+            if (hasChoicesById) {
+                const exists = Object.values(wo.choicesById).some(
+                    (c) => (c?.label ?? c?.value) === newLabel
+                );
+                if (!exists) {
+                    const key = "opt_" + Math.random().toString(36).slice(2, 9);
+                    wo.choicesById[key] = { label: newLabel, value: newLabel };
+                }
+                if (hasChoicesArray) delete wo.choices;
+            } else if (hasChoicesArray) {
+                const normalized = toStringArray(wo.choices);
+                if (!normalized.includes(newLabel)) normalized.push(newLabel);
+                wo.choices = normalized;
+            } else {
+                wo.choices = [newLabel];
+                delete wo.choicesById;
+            }
+            await grist.docApi.applyUserActions([
+                [
+                    "UpdateRecord",
+                    "_grist_Tables_column",
+                    meta.id,
+                    { widgetOptions: JSON.stringify(wo) },
+                ],
+            ]);
+            meta.widgetOptions = JSON.stringify(wo);
+            const selectedSource = select.value;
+            const selectedColumn = catchColumn(choices, selectedSource);
+            if (selectedColumn) {
+                renderVisibilityUI(selectedColumn);
+                renderBoard(selectedColumn, lastRecords, selectedSource);
+            }
         }
-      }
-      const stored = getStoredSource();
-      if (stored) {
-        const has = Array.from(select.options).some(
-          (o) => o.value === stored
-        );
-        if (has) {
-          select.value = stored;
-        }
-      }
-      if (select.value === "none" && select.options.length > 1) {
-        select.value = select.options[1].value;
-        await setStoredSource(select.value);
-      }
-      choicesInitialized = true;
-      // debugDumpColumnFormats();
-    }
 
-    // Hook vide (réservé si besoin plus tard)
-    grist.onRecord((record) => { });
-  </script>
+        // Panneau de sélection des champs visibles dans les cards
+        function renderFieldsUI(colMeta) {
+            const tableCols = allColsMeta;
+            const sourceColId = colMeta.colId || colMeta.id;
+            const tableId = currentTableId;
+            if (!tableId) return;
+            const fieldMetas = tableCols.filter((c) => {
+                const cid = c.colId || c.id || "";
+                if (!cid) return false;
+                if (cid === "id") return false;
+                if (cid === "manualSort") return false;
+                if (cid.includes("gristHelper_Display")) return false;
+                if (cid === sourceColId) return false;
+                return true;
+            });
+            const allCids = fieldMetas.map((f) => f.colId || f.id);
+            const defaultVisible = allCids.slice(0, 3);
+            const mode = getHiddenFieldsMode(tableId, sourceColId);
+            const hiddenNow = new Set(
+                getHiddenFields(tableId, sourceColId).map(norm)
+            );
+            const buildVisibleSetFromMode = () => {
+                if (mode === "all") {
+                    return new Set(allCids);
+                } else if (mode === "default") {
+                    return new Set(defaultVisible);
+                } else {
+                    return new Set(allCids.filter((c) => !hiddenNow.has(norm(c))));
+                }
+            };
+            fieldsPanel.innerHTML =
+                "<div class='font-medium mb-2 text-xs'>Champs :</div>";
+            const topRow = document.createElement("label");
+            topRow.className = "flex items-center gap-2 mb-2 text-xs";
+            const masterCb = document.createElement("input");
+            masterCb.type = "checkbox";
+            masterCb.checked = mode === "all";
+            masterCb.addEventListener("click", (e) => e.stopPropagation());
+            masterCb.addEventListener("change", async (e) => {
+                e.stopPropagation();
+                if (masterCb.checked) {
+                    await setHiddenFields(tableId, sourceColId, []);
+                    await setHiddenFieldsMode(tableId, sourceColId, "all");
+                } else {
+                    await setHiddenFields(tableId, sourceColId, []);
+                    await setHiddenFieldsMode(tableId, sourceColId, "default");
+                }
+                const selectedColumn = catchColumn(choices, sourceColId);
+                if (selectedColumn) {
+                    renderBoard(selectedColumn, lastRecords, sourceColId);
+                    renderFieldsUI(selectedColumn);
+                }
+            });
+            const masterSpan = document.createElement("span");
+            masterSpan.textContent = "Afficher tous";
+            topRow.appendChild(masterCb);
+            topRow.appendChild(masterSpan);
+            fieldsPanel.appendChild(topRow);
+            const list = document.createElement("div");
+            list.className = "grid grid-cols-2 gap-1 text-xs";
+            fieldsPanel.appendChild(list);
+            const visibleSetNow = buildVisibleSetFromMode();
+            for (const fm of fieldMetas) {
+                const cid = fm.colId || fm.id;
+                if (!cid || cid === "manualSort") continue;
+                const row = document.createElement("label");
+                row.className = "flex items-center gap-2 text-xs";
+                const cb = document.createElement("input");
+                cb.type = "checkbox";
+                cb.checked = visibleSetNow.has(cid);
+                cb.addEventListener("click", (e) => e.stopPropagation());
+                cb.addEventListener("change", async (e) => {
+                    e.stopPropagation();
+                    const curMode = getHiddenFieldsMode(tableId, sourceColId);
+                    const curHidden = new Set(
+                        getHiddenFields(tableId, sourceColId).map(norm)
+                    );
+                    let curVisible;
+                    if (curMode === "all") {
+                        curVisible = new Set(allCids);
+                    } else if (curMode === "default") {
+                        curVisible = new Set(defaultVisible);
+                    } else {
+                        curVisible = new Set(
+                            allCids.filter((c) => !curHidden.has(norm(c)))
+                        );
+                    }
+                    if (cb.checked) {
+                        curVisible.add(cid);
+                    } else {
+                        curVisible.delete(cid);
+                    }
+                    const newHidden = allCids.filter((c) => !curVisible.has(c));
+                    await setHiddenFields(tableId, sourceColId, newHidden);
+                    await setHiddenFieldsMode(tableId, sourceColId, "custom");
+                    const selectedColumn = catchColumn(choices, sourceColId);
+                    if (selectedColumn) {
+                        renderBoard(selectedColumn, lastRecords, sourceColId);
+                        renderFieldsUI(selectedColumn);
+                    }
+                });
+                const span = document.createElement("span");
+                span.textContent = fm.label || cid;
+                row.appendChild(cb);
+                row.appendChild(span);
+                list.appendChild(row);
+            }
+        }
+        const fieldsClass = fieldsPanel.classList;
+        fieldsBtn.addEventListener("click", () => {
+            const isHidden = fieldsClass.toggle("hidden");
+            fieldsBtn.textContent = `${isHidden ? "Afficher les champs" : "Masquer les champs"
+                }`;
+        });
+
+        function renderDateFilterUI() {
+            const dateCols = getDateColumns(allColsMeta); // toutes les colonnes date/datetime
+            const current = getDateFilterField();
+            const hidePast = getHidePastFlag();
+
+            // Reset du panneau
+            datePanel.innerHTML = "";
+
+            // Titre
+            const title = document.createElement("div");
+            title.className = "font-medium mb-2 text-xs";
+            title.textContent = "Filtre par date";
+            datePanel.appendChild(title);
+
+            // Conteneur
+            const container = document.createElement("div");
+            container.className = "flex flex-col gap-3";
+            datePanel.appendChild(container);
+
+            // --- Ligne Select (champ date)
+            const rowSelect = document.createElement("label");
+            rowSelect.className = "flex items-center gap-2";
+            container.appendChild(rowSelect);
+
+            const lblSelect = document.createElement("span");
+            lblSelect.className = "text-xs w-40";
+            lblSelect.textContent = "Champ date :";
+            rowSelect.appendChild(lblSelect);
+
+            const selectEl = document.createElement("select");
+            selectEl.id = "dateFilterSelect";
+            selectEl.className = "rounded-lg p-2 text-xs shadow-md";
+            rowSelect.appendChild(selectEl);
+
+            // Option "aucun"
+            const optNone = document.createElement("option");
+            optNone.value = "";
+            optNone.textContent = "— Aucun —";
+            selectEl.appendChild(optNone);
+
+            // Options dynamiques
+            for (const c of dateCols) {
+                const opt = document.createElement("option");
+                opt.value = String(c.colId);
+                opt.textContent = c.label || c.colId;
+                if (c.colId === current) opt.selected = true;
+                selectEl.appendChild(opt);
+            }
+
+            // --- Ligne Checkbox (masquer passé)
+            const rowCheckbox = document.createElement("label");
+            rowCheckbox.className = "flex items-center gap-2";
+            container.appendChild(rowCheckbox);
+
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.id = "hidePastCheckbox";
+            cb.checked = !!hidePast;
+            rowCheckbox.appendChild(cb);
+
+            const cbText = document.createElement("span");
+            cbText.className = "text-xs";
+            cbText.textContent = "Masquer les cartes dont la date est passée";
+            rowCheckbox.appendChild(cbText);
+
+            // Aide
+            const help = document.createElement("p");
+            help.className = "text-xs text-slate-500";
+            help.textContent =
+                "Si aucun champ n'est choisi, aucune carte n'est filtrée.";
+            container.appendChild(help);
+
+            // Listeners
+            selectEl.addEventListener("change", async () => {
+                await setDateFilterField(selectEl.value);
+                const selectedSource = select.value;
+                const selectedColumn = catchColumn(choices, selectedSource);
+                if (!selectedColumn) return;
+                renderBoard(
+                    selectedColumn,
+                    applyDateFilter(lastRecords),
+                    selectedSource
+                );
+            });
+
+            cb.addEventListener("change", async () => {
+                await setHidePastFlag(cb.checked);
+                const selectedSource = select.value;
+                const selectedColumn = catchColumn(choices, selectedSource);
+                if (!selectedColumn) return;
+                renderBoard(
+                    selectedColumn,
+                    applyDateFilter(lastRecords),
+                    selectedSource
+                );
+            });
+        }
+
+        laneSelect.addEventListener("change", () => {
+            const selectedSource = select.value;
+            const selectedColumn = catchColumn(choices, selectedSource);
+            if (!selectedColumn) return;
+            renderBoard(selectedColumn, lastRecords, selectedSource);
+        });
+
+        // bouton d’affichage/masquage du panneau
+        const dateClass = datePanel.classList;
+        dateBtn?.addEventListener("click", () => {
+            const isHidden = dateClass.toggle("hidden");
+            dateBtn.textContent = isHidden ? "Filtre date" : "Masquer filtre date";
+        });
+
+        // Retourne le tableau filtré selon le champ et le toggle "masquer le passé".
+        function applyDateFilter(records) {
+            const fld = getDateFilterField();
+            const hidePast = getHidePastFlag();
+            if (!hidePast || !fld) return records || [];
+
+            const now = new Date();
+            return (records || []).filter((rec) => {
+                const raw = rec[fld];
+                const d = toDate(raw);
+                // si pas de date ou date invalide -> on conserve
+                if (!d) return true;
+                // on masque seulement si la date est strictement antérieure à aujourd'hui
+                return !isPastDate(d, now);
+            });
+        }
+
+        // =====================================================================
+        // 11) CONSTRUCTION DU KANBAN & DRAG/DROP
+        // =====================================================================
+        function updateHeaderCounts() {
+            const { headers, groups, sourceColId } = currentCtx;
+            if (!headers || !headers.length || !sourceColId) return;
+
+            // on prend uniquement les records des lanes OUVERTES
+            const activeLabels = Array.from(openLanes);
+            const activeRecords = activeLabels.flatMap((l) => groups.get(l) || []);
+
+            // prépare un compteur par colonne
+            const counts = new Map(headers.map((h) => [h.value, 0]));
+
+            // même logique de matching que dans createKanban
+            const eq = (a, b) => strNoAccent(a) === strNoAccent(b);
+
+            for (const rec of activeRecords) {
+                const val = rec[sourceColId];
+                for (const h of headers) {
+                    const hv = h.value;
+                    let match = false;
+                    if (hv === empty) {
+                        match = isEmptyValue(val);
+                    } else if (Array.isArray(val)) {
+                        match = val.some((v) => eq(v, hv));
+                    } else {
+                        match = eq(val, hv);
+                    }
+                    if (match) {
+                        counts.set(hv, (counts.get(hv) || 0) + 1);
+                        break;
+                    }
+                }
+            }
+
+            // pousse les valeurs dans la barre d’entêtes
+            const badges = wrapper.querySelectorAll("[data-count-for]");
+            badges.forEach((el) => {
+                const key = el.getAttribute("data-count-for");
+                el.textContent = String(counts.get(key) || 0);
+            });
+        }
+
+        function makeCardDraggable(cardEl, rowId, fromHeaderValue, sourceColId) {
+            let dragging = false;
+            let proxy = null;
+            let offsetX = 0;
+            let offsetY = 0;
+            let lastHoveredColumn = null;
+
+            const onPointerDown = (e) => {
+                // on évite le drag si clic droit, etc.
+                if (e.button != null && e.button !== 0) return;
+
+                const point = e.touches ? e.touches[0] : e;
+                const rect = cardEl.getBoundingClientRect();
+
+                dragging = true;
+
+                // offset = où tu as cliqué dans la carte => alignement parfait
+                offsetX = point.clientX - rect.left;
+                offsetY = point.clientY - rect.top;
+
+                cardEl.style.opacity = "0";
+
+                // créer un proxy (clone) qui bouge, PAS la carte originale
+                proxy = cardEl.cloneNode(true);
+                proxy.classList.add("drag-proxy");
+                proxy.style.width = rect.width + "px";
+                proxy.style.height = rect.height + "px";
+                proxy.style.left = rect.left + "px";
+                proxy.style.top = rect.top + "px";
+                document.body.appendChild(proxy);
+
+                document.body.classList.add("is-dragging");
+
+                // listeners globaux (une seule fois par drag)
+                document.addEventListener("mousemove", onMove);
+                document.addEventListener("mouseup", onUp);
+                document.addEventListener("touchmove", onMove, { passive: false });
+                document.addEventListener("touchend", onUp);
+
+                e.preventDefault();
+            };
+
+            const onMove = (e) => {
+                if (!dragging) return;
+                const point = e.touches ? e.touches[0] : e;
+                if (e.touches) e.preventDefault();
+
+                // position proxy alignée au pointeur
+                proxy.style.left = (point.clientX - offsetX) + "px";
+                proxy.style.top = (point.clientY - offsetY) + "px";
+
+                // déterminer la colonne sous le pointeur
+                const el = document.elementFromPoint(point.clientX, point.clientY);
+                const column = el?.closest(".column");
+
+                // cleanup du highlight précédent
+                if (lastHoveredColumn && lastHoveredColumn !== column) {
+                    lastHoveredColumn.classList.remove("drag-over");
+                }
+
+                if (column) {
+                    column.classList.add("drag-over");
+                    lastHoveredColumn = column;
+                } else {
+                    lastHoveredColumn = null;
+                }
+            };
+
+            const onUp = async (e) => {
+                if (!dragging) return;
+                dragging = false;
+
+                const point = e.changedTouches ? e.changedTouches[0] : e;
+
+                // retirer listeners
+                document.removeEventListener("mousemove", onMove);
+                document.removeEventListener("mouseup", onUp);
+                document.removeEventListener("touchmove", onMove);
+                document.removeEventListener("touchend", onUp);
+
+                // cleanup highlight colonne
+                if (lastHoveredColumn) {
+                    lastHoveredColumn.classList.remove("drag-over");
+                    lastHoveredColumn = null;
+                }
+
+                document.body.classList.remove("is-dragging");
+
+                // détecter la colonne drop target
+                const el = document.elementFromPoint(point.clientX, point.clientY);
+                const column = el?.closest(".column");
+                const toHeaderValue = column?.dataset?.headerValue;
+
+                cardEl.style.opacity = "";
+
+                // supprimer le proxy
+                if (proxy) {
+                    proxy.remove();
+                    proxy = null;
+                }
+
+                // pas de colonne => pas de drop
+                if (!toHeaderValue) return;
+
+                // drop sur même colonne => no-op
+                if (toHeaderValue === fromHeaderValue) return;
+
+                const record = lastRecords.find((r) => r.id === rowId);
+                if (!record) return;
+
+                const currentCellValue = record[sourceColId];
+
+                await updateCardAfterDrop(
+                    rowId,
+                    sourceColId,
+                    fromHeaderValue,
+                    toHeaderValue,
+                    currentCellValue
+                );
+            };
+
+            // start drag
+            cardEl.addEventListener("mousedown", onPointerDown);
+            cardEl.addEventListener("touchstart", onPointerDown, { passive: false });
+        }
+
+        function createKanban(leadHeader, wrapper, records, source, opts = {}) {
+            const {
+                showHeaders = true,
+                showAdd = true,
+                onlyHeaders = false,
+            } = opts;
+
+            const sourceColId = source;
+            wrapper.innerHTML = "";
+            const tableId = currentTableId;
+            const mode = getHiddenFieldsMode(tableId, sourceColId);
+            const hiddenFields = getHiddenFields(tableId, sourceColId);
+            const hiddenFieldSet = new Set(hiddenFields.map(norm));
+
+
+            if (showAdd) {
+                const wrapperAddColumn = document.createElement("div");
+                wrapperAddColumn.classList.add(
+                    "add-col",
+                    "flex",
+                    "items-center",
+                    "bg-emerald-500",
+                    "rounded-full",
+                    "self-start",
+                    "cursor-pointer",
+                    "sticky",
+                    "top-0"
+                );
+                const addColumn = document.createElement("div");
+                addColumn.classList.add(
+                    "p-2",
+                    "flex",
+                    "items-center",
+                    "justify-center",
+                    "text-white",
+                    "text-xl",
+                    "font-bold",
+                    "leading-none",
+                    "w-12",
+                    "h-12",
+                    "text-center"
+                );
+                addColumn.textContent = "+";
+                wrapperAddColumn.appendChild(addColumn);
+                wrapper.appendChild(wrapperAddColumn);
+                addColumn.addEventListener("click", async () => {
+                    const input = document.createElement("input");
+                    input.type = "text";
+                    input.placeholder = "Nouvelle colonne";
+                    input.className =
+                        "p-2 rounded border border-emerald-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
+                    addColumn.replaceWith(input);
+                    const submit = document.createElement("input");
+                    submit.type = "submit";
+                    submit.value = "OK";
+                    submit.className =
+                        "p-2 mt-2 w-auto rounded bg-emerald-500 text-white font-semibold hover:bg-emerald-600 cursor-pointer";
+                    wrapperAddColumn.appendChild(submit);
+                    wrapperAddColumn.classList.add("gap-2", "w-full", "bg-transparent");
+                    submit.addEventListener("click", async () => {
+                        const val = input.value;
+                        if (val && val.trim()) {
+                            await addChoiceToSourceColumn(source, val.trim());
+                            input.replaceWith(addColumn);
+                            submit.classList.add("hidden");
+                        }
+                    });
+                });
+            }
+
+            for (const item of leadHeader) {
+                const column = document.createElement("div");
+                column.classList.add(
+                    "w-full",
+                    "flex",
+                    "flex-col",
+                    "gap-4",
+                    "items-center",
+                    "bg-gray-50",
+                    "dark:bg-gray-700",
+                    "rounded",
+                    "pb-6"
+                );
+                column.classList.add("column");
+                column.dataset.headerValue = item.value;
+
+                wrapper.appendChild(column);
+
+                let countRecord = null;
+                if (showHeaders) {
+                    const head = document.createElement("h2");
+                    const titleHead = document.createElement("span");
+                    titleHead.textContent = item.value;
+                    titleHead.classList.add("text-center", "text-xs", "font-semibold");
+                    head.classList.add(
+                        "column-head",
+                        "w-full",
+                        "min-w-0",
+                        "flex",
+                        "justify-around",
+                        "items-center",
+                        "bg-emerald-500",
+                        "text-white",
+                        "rounded-t",
+                        "sticky",
+                        "top-0",
+                        "p-4"
+                    );
+                    countRecord = document.createElement("span");
+                    countRecord.setAttribute("data-count-for", item.value); // clé = libellé de la colonne
+                    countRecord.textContent = "0";
+                    countRecord.className =
+                        "inline-flex items-center justify-center px-2 py-0.5 text-xs font-semibold bg-emerald-400 rounded-full";
+                    head.appendChild(titleHead);
+                    head.appendChild(countRecord);
+                    column.prepend(head);
+                }
+                const hiddenSet = new Set(getHiddenFor(source).map(norm));
+                const labelKey = norm(item.value);
+                if (hiddenSet.has(labelKey)) {
+                    column.style.display = "none";
+                }
+
+                enableColumnDrop(column, item.value, source);
+                let count = 0;
+                if (!onlyHeaders) {
+                    for (const record of records) {
+                        const cellValue = record[source];
+                        const headerValue = item.value;
+                        let isMatch = false;
+                        if (headerValue === empty) {
+                            isMatch = isEmptyValue(cellValue);
+                        } else if (Array.isArray(cellValue)) {
+                            isMatch = cellValue.some(
+                                (v) => strNoAccent(v) === strNoAccent(headerValue)
+                            );
+                        } else {
+                            isMatch = strNoAccent(cellValue) === strNoAccent(headerValue);
+                        }
+                        if (!isMatch) continue;
+                        count++;
+                        const card = document.createElement("div");
+                        card.classList.add(
+                            "kanban-card",
+                            "card",
+                            "test-sm",
+                            "w-5/6",
+                            "min-w-0",
+                            "rounded-lg",
+                            "shadow-lg",
+                            "p-3",
+                            "h-auto",
+                            "cursor-pointer",
+                            "bg-white",
+                            "hover:bg-emerald-50",
+                            "dark:bg-gray-500",
+                            "dark:hover:bg-emerald-800",
+                            "overflow-hidden",
+                            "focus:bg-emerald-50",           // Nouveau : background opaque en mode clair au focus
+                            "focus:dark:bg-emerald-900",   // Nouveau : background opaque en mode sombre au focus
+                            "focus:opacity-100"
+                        );
+                        card.tabIndex = 0;
+                        let candidateCids = allColsMeta
+                            .map((c) => c.colId || c.id)
+                            .filter(
+                                (cid) =>
+                                    cid &&
+                                    cid !== "id" &&
+                                    cid !== source &&
+                                    cid !== "manualSort" &&
+                                    !cid.includes("gristHelper_Display")
+                            );
+                        // candidateCids = candidateCids.filter((cid) => cid in record);
+                        let keys;
+                        if (mode === "all") {
+                            keys = candidateCids;
+                        } else if (mode === "custom") {
+                            keys = candidateCids.filter(
+                                (cid) => !hiddenFieldSet.has(norm(cid))
+                            );
+                        } else {
+                            const nonEmpty = [];
+                            for (const k of candidateCids) {
+                                const v = record[k];
+                                if (!isEmptyValue(v)) nonEmpty.push(k);
+                                if (nonEmpty.length === 3) break;
+                            }
+                            keys = nonEmpty.length ? nonEmpty : candidateCids.slice(0, 3);
+                        }
+                        for (const infos of keys) {
+                            const meta = getColMetaByAnyKey(infos);
+                            const fieldType = getFieldType(meta);
+                            const style = getDisplayStyle(meta);
+                            const row = document.createElement("div");
+                            row.classList.add(
+                                "flex",
+                                "flex-col",
+                                "gap-2",
+                                "items-start",
+                                "p-2"
+                            );
+                            const titleItem = document.createElement("p");
+                            titleItem.innerHTML = `${infos}&nbsp;:`;
+                            titleItem.classList.add(
+                                "font-semibold",
+                                "text-gray-800",
+                                "dark:text-gray-300"
+                            );
+                            const raw = record[infos];
+                            const contentEl = renderFieldValue(meta, fieldType, style, raw);
+                            contentEl.classList.add(
+                                "break-words",
+                                "text-gray-900",
+                                "dark:text-gray-50"
+                            );
+                            row.appendChild(titleItem);
+                            row.appendChild(contentEl);
+                            card.appendChild(row);
+                        }
+                        column.appendChild(card);
+                        card.dataset.rowId = record.id;
+                        card.addEventListener("click", () => {
+                            if (record.id !== undefined) {
+                                grist.setCursorPos({ rowId: record.id });
+                            }
+                        });
+                        makeCardDraggable(card, record.id, item.value, source);
+                    }
+                }
+                if (showHeaders && countRecord)
+                    countRecord.textContent = String(count);
+            }
+        }
+        function rerenderKanban(selectedColumn, records, colId) {
+            const allHeaders = renderHeader(selectedColumn, records);
+            const visibleHeaders = buildVisibleHeaders(selectedColumn, allHeaders);
+            createKanban(visibleHeaders, wrapper, records, colId);
+        }
+        function catchColumn(choices, selectedSource) {
+            for (const col of choices) {
+                if ((col.colId || col.id) === selectedSource) {
+                    return col;
+                }
+            }
+            return null;
+        }
+        async function updateCardAfterDrop(
+            rowId,
+            sourceColId,
+            fromHeaderValue,
+            toHeaderValue,
+            currentCellValue
+        ) {
+            await initCurrentTableId();
+            const eq = (a, b) => strNoAccent(a) === strNoAccent(b);
+            let newValue;
+            if (toHeaderValue === empty) {
+                newValue = Array.isArray(currentCellValue) ? [] : null;
+            } else if (Array.isArray(currentCellValue)) {
+                const withoutOld = currentCellValue.filter(
+                    (v) => !eq(v, fromHeaderValue)
+                );
+                if (!withoutOld.some((v) => eq(v, toHeaderValue))) {
+                    withoutOld.push(toHeaderValue);
+                }
+                newValue = withoutOld;
+            } else {
+                newValue = toHeaderValue;
+            }
+            const action = [
+                "UpdateRecord",
+                currentTableId,
+                rowId,
+                { [sourceColId]: newValue },
+            ];
+            await grist.docApi.applyUserActions([action]);
+        }
+
+        function enableColumnDrop(columnEl, headerValue, sourceColId) {
+            columnEl.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                columnEl.classList.add("ring-2", "ring-emerald-500");
+            });
+            columnEl.addEventListener("dragleave", () => {
+                columnEl.classList.remove("ring-2", "ring-emerald-500");
+            });
+            columnEl.addEventListener("drop", async (e) => {
+                e.preventDefault();
+                columnEl.classList.remove("ring-2", "ring-emerald-500");
+                const rowId = Number(e.dataTransfer.getData("rowId"));
+                const fromHeader = e.dataTransfer.getData("fromHeader");
+                const sourceCol = e.dataTransfer.getData("sourceColId");
+                if (!rowId || !sourceCol) return;
+                if (sourceCol !== sourceColId) return;
+                const record = lastRecords.find((r) => r.id === rowId);
+                if (!record) return;
+                const currentCellValue = record[sourceColId];
+                await updateCardAfterDrop(
+                    rowId,
+                    sourceColId,
+                    fromHeader,
+                    headerValue,
+                    currentCellValue
+                );
+            });
+        }
+
+        function renderBoard(selectedColumn, records, sourceColId) {
+            const laneColId = laneSelect.value || "";
+            const filtered = applyDateFilter(records);
+
+            // Pas de regroupement -> comportement actuel (1 seul kanban)
+            if (!laneColId) {
+                wrapper.className = "text-xs w-full items-stretch justify-between flex gap-2 flex-col sm:flex-row";
+                rerenderKanban(selectedColumn, filtered, sourceColId);
+                return;
+            }
+
+            // Avec regroupement
+            wrapper.innerHTML = ""; // on reconstruit la grille de lignes
+            wrapper.className = "w-full flex flex-col gap-6";
+            const { order, groups } = groupRecordsByLane(filtered, laneColId);
+
+            // Bandeau de titre des colonnes (optionnel mais utile en multi-ligne)
+            // On peut le rendre une seule fois au-dessus, en réutilisant ta logique de header :
+            const headers = buildVisibleHeaders(
+                selectedColumn,
+                renderHeader(selectedColumn, filtered)
+            );
+
+            const headerRow = document.createElement("div");
+            headerRow.className = "w-full flex items-start gap-2 sticky top-0 z-20";
+            const leftSpacer = document.createElement("div");
+            leftSpacer.className = "w-52 shrink-0";
+            const headerWrapper = document.createElement("div");
+            headerWrapper.className =
+                "w-full overflow-x-auto flex gap-2 header-row kanban-scroll";
+            headerRow.appendChild(leftSpacer);
+            headerRow.appendChild(headerWrapper);
+            wrapper.appendChild(headerRow);
+
+            // Kanban du header global (avec en-têtes et bouton +)
+            createKanban(headers, headerWrapper, filtered, sourceColId, {
+                showHeaders: true,
+                showAdd: true,
+                onlyHeaders: true,
+            });
+
+            currentCtx.headers = headers;
+            currentCtx.groups = groups;
+            currentCtx.sourceColId = sourceColId;
+            updateHeaderCounts();
+
+            // Pour chaque lane, on fait une rangée: libellé + compteur + kanban
+            for (const laneLabel of order) {
+                const laneId = `lane-${slug(laneLabel)}`;
+
+                // --- HEADER (bouton d'accordéon)
+                const h2 = document.createElement("h2");
+                h2.id = `${laneId}-heading`;
+                h2.className = "text-xs";
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className =
+                    "flex items-center justify-between w-full p-3 font-medium text-gray-600 " +
+                    "border border-b-0 border-gray-200 rounded-t-xl focus:ring-4 focus:ring-gray-200 " +
+                    "dark:focus:ring-gray-800 dark:border-gray-700 dark:text-gray-300 " +
+                    "hover:bg-gray-100 dark:hover:bg-gray-800 gap-3";
+                btn.setAttribute("data-accordion-target", `#${laneId}-panel`);
+                btn.setAttribute("aria-expanded", "false");
+                btn.setAttribute("aria-controls", `${laneId}-panel`);
+
+                const titleWrap = document.createElement("span");
+                titleWrap.className = "flex items-center gap-2";
+                const title = document.createElement("span");
+                title.className = "font-semibold";
+                title.textContent = laneLabel;
+                const badge = document.createElement("span");
+                badge.className =
+                    "text-xs inline-flex items-center justify-center px-2 py-0.5 font-semibold " +
+                    "bg-emerald-100 text-emerald-700 rounded-full";
+                badge.textContent = String((groups.get(laneLabel) || []).length);
+                titleWrap.appendChild(title);
+                titleWrap.appendChild(badge);
+
+                const icon = document.createElement("svg");
+                icon.setAttribute("aria-hidden", "true");
+                icon.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+                icon.setAttribute("fill", "none");
+                icon.setAttribute("viewBox", "0 0 10 6");
+                icon.className = "w-3 h-3 rotate-180 shrink-0";
+                icon.setAttribute("data-accordion-icon", "");
+                icon.innerHTML = `<path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5 5 1 1 5"/>`;
+
+                btn.appendChild(titleWrap);
+                btn.appendChild(icon);
+                h2.appendChild(btn);
+
+                // --- PANEL (contenu repliable)
+                const panel = document.createElement("div");
+                panel.id = `${laneId}-panel`;
+                panel.className = "panel hidden";
+                panel.setAttribute("aria-labelledby", `${laneId}-heading`);
+                const isOpen = openLanes.has(laneLabel);
+                btn.setAttribute("aria-expanded", String(isOpen));
+                if (!isOpen) {
+                    panel.classList.add("hidden");
+                } else {
+                    panel.classList.remove("hidden");
+                }
+
+                const panelInner = document.createElement("div");
+                panelInner.className =
+                    "panelInner w-full flex border border-t-0 border-gray-200 dark:border-gray-700 dark:bg-gray-900";
+                panel.appendChild(panelInner);
+
+                // Injection dans le wrapper global
+                wrapper.appendChild(h2);
+                wrapper.appendChild(panel);
+
+                const ghostLeftSpacer = document.createElement("div");
+                ghostLeftSpacer.className = "ghostLeftSpacer w-[17rem] shrink-0";
+                panelInner.appendChild(ghostLeftSpacer);
+
+                // --- Le vrai kanban de la lane (sans headers, sans “+”) ---
+                const laneKanban = document.createElement("div");
+                laneKanban.className = "laneKanban flex gap-2 text-xs w-full";
+                panelInner.appendChild(laneKanban);
+
+                createKanban(
+                    headers,
+                    laneKanban,
+                    groups.get(laneLabel) || [],
+                    sourceColId,
+                    {
+                        showHeaders: false,
+                        showAdd: false,
+                    }
+                );
+            }
+            const scrollers = Array.from(
+                wrapper.querySelectorAll(".kanban-scroll")
+            );
+            syncHorizontalScroll(scrollers);
+        }
+
+        // =====================================================================
+        // 12) ÉVÉNEMENTS UI & CYCLE DE VIE GRIST
+        // =====================================================================
+        // ACCORDION: délégation d'événements (une seule fois, au niveau du wrapper)
+        wrapper.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-accordion-target]");
+            if (!btn) return;
+
+            const selector = btn.getAttribute("data-accordion-target");
+            const panel = document.querySelector(selector);
+            if (!panel) return;
+
+            const expanded = btn.getAttribute("aria-expanded") === "true";
+            btn.setAttribute("aria-expanded", String(!expanded));
+            panel.classList.toggle("hidden", expanded);
+
+            const icon = btn.querySelector("[data-accordion-icon]");
+            if (icon) icon.classList.toggle("rotate-180", !expanded);
+
+            const heading = btn.closest("h2");
+            const laneLabel =
+                btn.querySelector(".font-semibold")?.textContent || "";
+            if (!expanded) openLanes.add(laneLabel);
+            else openLanes.delete(laneLabel);
+
+            updateHeaderCounts();
+        });
+
+        select.addEventListener("change", async () => {
+            const selectedSource = select.value;
+            await setStoredSource(selectedSource);
+            const selectedColumn = catchColumn(choices, selectedSource);
+            if (!selectedColumn) return;
+            renderVisibilityUI(selectedColumn);
+            renderFieldsUI(selectedColumn);
+            renderBoard(selectedColumn, lastRecords, selectedSource);
+        });
+
+        // Initialisation: charge les colonnes Choice/ChoiceList et peuple le select
+        (async () => {
+            try {
+                const cols = await getAllColumns();
+                allColsMeta = cols;
+
+                for (const col of cols) {
+                    if (isChoiceLike(col)) {
+                        const option = document.createElement("option");
+                        option.classList.add(
+                            "text-xs",
+                            "select-none",
+                            "focus:bg-emerald-500",
+                            "focus:text-white"
+                        );
+                        option.value = col.colId || col.id || "";
+                        option.textContent = col.label || col.colId || "(?)";
+                        select.appendChild(option);
+                        choices.push(col);
+
+                        const cid = col.colId || col.id || "";
+                        if (
+                            !cid ||
+                            cid === "id" ||
+                            cid === "manualSort" ||
+                            cid.includes("gristHelper_Display")
+                        )
+                            continue;
+                        const opt = document.createElement("option");
+                        opt.value = cid;
+                        opt.textContent = col.label || cid;
+                        laneSelect.appendChild(opt);
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        })();
+
+        // Réception des records et rendu du Kanban
+        grist.onRecords(async (records) => {
+            lastRecords = records || [];
+            await initCurrentTableId();
+            await initChoicesOnce();
+            allColsMeta = await getAllColumns();
+            rebuildMetaIndex();
+            if (select.value === "none") {
+                const stored = getStoredSource();
+                if (stored) {
+                    const has = Array.from(select.options).some(
+                        (o) => o.value === stored
+                    );
+                    if (has) select.value = stored;
+                }
+            }
+            const selectedSource = select.value;
+            const selectedColumn = catchColumn(choices, selectedSource);
+            if (!selectedColumn) return;
+            renderVisibilityUI(selectedColumn);
+            renderFieldsUI(selectedColumn);
+            renderDateFilterUI();
+            renderBoard(selectedColumn, lastRecords, selectedSource);
+        });
+
+        // Petit init one-shot des choix (remplissage du select + mémorisation)
+        async function initChoicesOnce() {
+            if (choicesInitialized) return;
+            const cols = await getAllColumns();
+            allColsMeta = cols;
+            rebuildMetaIndex();
+            while (select.options.length > 1) select.remove(1);
+            choices = [];
+            for (const col of cols) {
+                if (isChoiceLike(col)) {
+                    const opt = document.createElement("option");
+                    opt.value = col.colId || col.id || "";
+                    opt.textContent = col.label || col.colId || "(?)";
+                    select.appendChild(opt);
+                    choices.push(col);
+                }
+            }
+            const stored = getStoredSource();
+            if (stored) {
+                const has = Array.from(select.options).some(
+                    (o) => o.value === stored
+                );
+                if (has) {
+                    select.value = stored;
+                }
+            }
+            if (select.value === "none" && select.options.length > 1) {
+                select.value = select.options[1].value;
+                await setStoredSource(select.value);
+            }
+            choicesInitialized = true;
+            // debugDumpColumnFormats();
+        }
+
+        // Hook vide (réservé si besoin plus tard)
+        grist.onRecord((record) => { });
+    </script>
 </body>
 
 </html>

@@ -26,12 +26,6 @@
         0 10px 25px rgba(0, 0, 0, 0.25),
         0 0 0 2px rgba(16, 185, 129, 0.3);
     }
-
-    .drag-ghost {
-      opacity: 1 !important;
-      background: white;
-      border: 1px solid
-    }
   </style>
 
 </head>
@@ -1393,60 +1387,22 @@
 
     function makeCardDraggable(cardEl, rowId, fromHeaderValue, sourceColId) {
       cardEl.draggable = true;
-      cardEl.addEventListener("dragstart", async (e) => {
+      cardEl.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("rowId", String(rowId));
         e.dataTransfer.setData("fromHeader", fromHeaderValue);
         e.dataTransfer.setData("sourceColId", sourceColId);
         e.dataTransfer.effectAllowed = "move";
 
-        const { img, w } = await makeOpaqueDragImageFromEl(cardEl);
-        e.dataTransfer.setDragImage(img, Math.round(w / 2), 20);
-
+        // Focus Drag
         document.body.classList.add("is-dragging");
         cardEl.classList.add("drag-active");
-        const r = cardEl.getBoundingClientRect();
-
-        async function makeOpaqueDragImageFromEl(el) {
-          const r = el.getBoundingClientRect();
-          const clone = el.cloneNode(true);
-
-          // On fige la taille pour éviter w-5/6, etc.
-          clone.style.width = `${r.width}px`;
-          clone.style.height = `${r.height}px`;
-          clone.style.opacity = "1";
-          clone.style.filter = "none";
-          clone.style.transform = "none";
-          clone.style.background = "#fff";
-
-          // Wrapper (important pour le rendu)
-          const wrap = document.createElement("div");
-          wrap.style.width = `${r.width}px`;
-          wrap.style.height = `${r.height}px`;
-          wrap.style.background = "#fff";
-          wrap.appendChild(clone);
-
-          const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(r.width)}" height="${Math.ceil(r.height)}">
-      <foreignObject width="100%" height="100%">
-        ${new XMLSerializer().serializeToString(wrap)}
-      </foreignObject>
-    </svg>
-  `;
-
-          const img = new Image();
-          img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-
-          await new Promise((res) => (img.onload = res));
-          return { img, w: r.width, h: r.height };
-
-        }
-
       });
 
       cardEl.addEventListener("dragend", () => {
+        // Reset visuel 
         document.body.classList.remove("is-dragging");
         cardEl.classList.remove("drag-active");
-      });
+      })
     }
     function createKanban(leadHeader, wrapper, records, source, opts = {}) {
       const {

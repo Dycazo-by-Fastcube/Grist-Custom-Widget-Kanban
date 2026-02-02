@@ -26,10 +26,11 @@
         0 10px 25px rgba(0, 0, 0, 0.25),
         0 0 0 2px rgba(16, 185, 129, 0.3);
     }
-    .drag-ghost {opacity: 1; background: white; border: 1px solid}
-    body.is-dragging .kanban-card:not(.drag-ghost) {
-      opacity: 1;
-      filter: brightness(0.5) blur(1px);
+
+    .drag-ghost {
+      opacity: 1 !important;
+      background: white;
+      border: 1px solid
     }
   </style>
 
@@ -1392,44 +1393,54 @@
 
     function makeCardDraggable(cardEl, rowId, fromHeaderValue, sourceColId) {
       cardEl.draggable = true;
-      cardEl.addEventListener("dragstart", (e) => {
+      cardEl.addEventListener("dragstart", async (e) => {
         e.dataTransfer.setData("rowId", String(rowId));
         e.dataTransfer.setData("fromHeader", fromHeaderValue);
         e.dataTransfer.setData("sourceColId", sourceColId);
         e.dataTransfer.effectAllowed = "move";
 
+        const { img, w } = await makeOpaqueDragImageFromEl(cardEl);
+        e.dataTransfer.setDragImage(img, Math.round(w / 2), 20);
+
+        document.body.classList.add("is-dragging");
+        cardEl.classList.add("drag-active");
         const r = cardEl.getBoundingClientRect();
 
-        const ghost = cardEl.cloneNode(true);
-        ghost.classList.add("drag-ghost");
+        async function makeOpaqueDragImageFromEl(el) {
+          const r = el.getBoundingClientRect();
+          const clone = el.cloneNode(true);
 
-        ghost.style.width = `${r.width}px`;
-        ghost.style.height = `${r.height}px`;
+          // On fige la taille pour éviter w-5/6, etc.
+          clone.style.width = `${r.width}px`;
+          clone.style.height = `${r.height}px`;
+          clone.style.opacity = "1";
+          clone.style.filter = "none";
+          clone.style.transform = "none";
+          clone.style.background = "#fff";
 
-        // Assurer un rendu plein
-        ghost.style.opacity = "1";
-        ghost.style.filter = "none";
-        ghost.style.transform = "none";
-        ghost.style.boxSizing = "border-box";
+          // Wrapper (important pour le rendu)
+          const wrap = document.createElement("div");
+          wrap.style.width = `${r.width}px`;
+          wrap.style.height = `${r.height}px`;
+          wrap.style.background = "#fff";
+          wrap.appendChild(clone);
 
-        // Hors écran mais "mesurable"
-        ghost.style.position = "fixed";
-        ghost.style.top = "-10000px";
-        ghost.style.left = "-10000px";
-        ghost.style.pointerEvents = "none";
-        ghost.style.margin = "0";
+          const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(r.width)}" height="${Math.ceil(r.height)}">
+      <foreignObject width="100%" height="100%">
+        ${new XMLSerializer().serializeToString(wrap)}
+      </foreignObject>
+    </svg>
+  `;
 
-        document.body.appendChild(ghost);
+          const img = new Image();
+          img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 
-        // Centrer la drag image sous le curseur (optionnel)
-        e.dataTransfer.setDragImage(ghost, Math.round(r.width / 2), 20);
+          await new Promise((res) => (img.onload = res));
+          return { img, w: r.width, h: r.height };
 
-        // Maintenant seulement : tes effets sur la page
-        cardEl.classList.add("drag-active");
-        document.body.classList.add("is-dragging");
+        }
 
-        // Nettoyage
-        requestAnimationFrame(() => ghost.remove());
       });
 
       cardEl.addEventListener("dragend", () => {

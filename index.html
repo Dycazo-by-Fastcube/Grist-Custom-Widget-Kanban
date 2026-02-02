@@ -26,6 +26,11 @@
         0 10px 25px rgba(0, 0, 0, 0.25),
         0 0 0 2px rgba(16, 185, 129, 0.3);
     }
+    body.is-dragging .kanban-card:not(.drag-ghost) {
+      opacity: 1;
+      filter: brightness(0.5) blur(1px);
+    }
+
   </style>
 
 </head>
@@ -1396,6 +1401,26 @@
         // Focus Drag
         document.body.classList.add("is-dragging");
         cardEl.classList.add("drag-active");
+
+        const ghost = cardEl.cloneNode(true);
+        ghost.classList.add("drag-host");
+
+        ghost.classList.add("bg-emerald-50", "dark:bg-emerald-800");
+
+        ghost.style.opacity = "1";
+        ghost.style.filter = "none";
+        ghost.style.transform = "none";
+        ghost.style.position = "absolute";
+        ghost.style.top = "-10000px";
+        ghost.style.left = "-10000px";
+        ghost.style.pointerEvents = "none";
+
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 20, 20);
+
+        document.body.classList.add("is-sdragging");
+
+        requestAnimationFrame(() => ghost.remove());
       });
 
       cardEl.addEventListener("dragend", () => {
